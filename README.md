@@ -182,6 +182,13 @@ News Score = Keyword Match Score + Source Score + Impact Bonus
 
 ---
 
+
+<img width="492" height="942" alt="image" src="https://github.com/user-attachments/assets/ee5da64b-2bb0-45dc-b702-ffd338c114f4" />
+
+
+---
+
+
 ## 📄 License
 
 This project is open source and available under the MIT License.
