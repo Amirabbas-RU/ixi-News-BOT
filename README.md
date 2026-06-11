@@ -52,19 +52,100 @@ pip install -r requirements.txt
 ```
 
 ### 2. Configure `main.env`
-```env
-# Telegram
-TELEGRAM_BOT_TOKEN=your_bot_token
-TELEGRAM_CHANNEL_ID=@your_channel
 
-# OpenRouter AI
-OPENROUTER_API_KEY=your_api_key
-OPENROUTER_MODEL=openai/gpt-4o-mini
-
-# RSS Feeds (fill URLs)
-CNBC_RSS_URL=https://search.cnbc.com/rs/...
-YAHOO_RSS_URL=https://finance.yahoo.com/...
+Copy the example file (`example.env` has full explanations for every variable) and edit it:
+```bash
+cp example.env main.env
+nano main.env
 ```
+
+All configuration lives in `main.env`. Here's what every section does:
+
+<details>
+<summary><b>⏱ Schedule & Thresholds</b></summary>
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `NEWS_UPDATE_INTERVAL_MINUTES` | How often the bot fetches news (in minutes) | `20` |
+| `RESET_DATABASE` | Delete DB & start fresh on next run (`true`/`false`) | `false` |
+| `MIN_IMPACT_SCORE` | Minimum score required for a news to be published (higher = fewer posts) | `15` |
+| `MAX_POSTS_PER_DAY` | Maximum posts sent per day across all sources | `30` |
+</details>
+
+<details>
+<summary><b>🤖 Telegram Settings</b></summary>
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `TELEGRAM_BOT_TOKEN` | Your bot token from [@BotFather](https://t.me/BotFather) | `"123456:ABC-DEF..."` |
+| `TELEGRAM_CHANNEL_ID` | Target channel ID (numeric like `-1001234567890` or `@username`) | `-1000000000000` |
+| `ADMIN_TELEGRAM_ID` | Telegram user ID allowed to use the control panel (`0` = disabled) | `0` |
+| `BOT_PANEL` | Enable the Telegram admin panel (`true`/`false`) | `false` |
+| `BOT_PANEL_BOT_TOKEN` | Separate bot token for the control panel (leave empty to reuse the main bot) | `""` |
+</details>
+
+<details>
+<summary><b>📡 RSS Feed URLs</b></summary>
+
+| Variable | Source | Example |
+|----------|--------|---------|
+| `CNBC_RSS_URL` | CNBC News | `https://www.cnbc.com/id/100003114/device/rss/rss.html` |
+| `YAHOO_RSS_URL` | Yahoo Finance | `https://finance.yahoo.com/news/rssindex` |
+| `REUTERS_RSS_URL` | Reuters World News | `http://feeds.reuters.com/reuters/worldNews` |
+| `INVESTING_RSS_URL` | Investing.com | `https://www.investing.com/rss/news_25.rss` |
+| `FOREXFACTORY_CALENDAR_URL` | ForexFactory Calendar | `https://nfs.faireconomy.media/ff_calendar_thisweek.xml` |
+</details>
+
+<details>
+<summary><b>🧠 AI Summarization (OpenRouter)</b></summary>
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `OPENROUTER_API_KEY` | Your API key from [openrouter.ai/keys](https://openrouter.ai/keys) | `"sk-or-v1-..."` |
+| `OPENROUTER_MODEL` | AI model for summarization | `"moonshotai/kimi-k2.6:free"` |
+| `OPENROUTER_BASE_URL` | API base URL (change only for custom proxy) | `"https://openrouter.ai/api/v1"` |
+</details>
+
+<details>
+<summary><b>🔑 Keyword Scoring — <code>HIGH_IMPACT_KEYWORDS</code></b></summary>
+
+JSON object mapping keywords to impact scores. When a news title or content matches any keyword, that score is added to the article's total.
+
+```json
+{
+  "Fed": 5,        // Critical — monetary policy
+  "CPI": 5,        // Critical — inflation data
+  "War": 5,        // Critical — geopolitical risk
+  "Inflation": 4,  // High impact
+  "Bitcoin": 4,    // High impact
+  "NASDAQ": 4,     // High impact
+  "Oil": 3,        // Medium impact
+  "Gold": 3,       // Medium impact
+  "Iran": 3,       // Medium impact
+  "USD": 2,        // Low impact
+  "AAPL": 2,       // Stock ticker
+  "TSLA": 2        // Stock ticker
+}
+```
+
+**Score guide:** `5` = critical · `4` = high · `3` = medium · `2` = low
+</details>
+
+<details>
+<summary><b>📊 Source Scores — <code>SOURCE_SCORE</code></b></summary>
+
+JSON object with base scores for each source. Every article from that source gets this score added automatically.
+
+```json
+{
+  "Yahoo": 3,
+  "CNBC": 3,
+  "ForexFactory": 3
+}
+```
+</details>
+
+---
 
 ### 3. Run
 ```bash
@@ -72,19 +153,7 @@ python main.py
 ```
 
 ### 4. Control Panel (optional)
-Set `BOT_PANEL=true` in `main.env` to enable the Telegram control panel for managing keywords, sources & settings on the fly.
-
----
-
-## ⚙️ Configuration
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `NEWS_UPDATE_INTERVAL_MINUTES` | Fetch interval | `60` |
-| `MIN_IMPACT_SCORE` | Minimum score to publish | `7` |
-| `MAX_POSTS_PER_DAY` | Daily post limit | `10` |
-| `HIGH_IMPACT_KEYWORDS` | JSON keyword→score map | `{"Fed": 5, ...}` |
-| `SOURCE_SCORE` | JSON source→score map | `{"CNBC": 4, ...}` |
+Set `BOT_PANEL=true` and `ADMIN_TELEGRAM_ID=your_id` in `main.env` to enable the Telegram control panel — manage sources, keywords, scores, and restart the bot directly from Telegram.
 
 ---
 
