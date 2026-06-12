@@ -17,6 +17,8 @@
 
 ## ✨ Features
 
+<div align="center">
+
 | Feature | Description |
 |---------|-------------|
 | 📡 **Multi-Source RSS** | Fetches news from CNBC, Yahoo Finance, ForexFactory & more |
@@ -28,9 +30,13 @@
 | 🔄 **Duplicate Detection** | Prevents re-sending the same news within a day |
 | 🐳 **Standalone Build** | PyInstaller support for running as `.exe` without Python |
 
+</div>
+
 ---
 
 ## 📰 Supported Sources
+
+<div align="center">
 
 | Source | Type | Status |
 |--------|------|--------|
@@ -39,6 +45,8 @@
 | ForexFactory | Economic Calendar | ✅ Active |
 | Reuters | RSS Feed | 🔜 Ready (configurable) |
 | Investing.com | RSS Feed | 🔜 Ready (configurable) |
+
+</div>
 
 ---
 
@@ -64,16 +72,22 @@ All configuration lives in `main.env`. Here's what every section does:
 <details>
 <summary><b>⏱ Schedule & Thresholds</b></summary>
 
+<div align="center">
+
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `NEWS_UPDATE_INTERVAL_MINUTES` | How often the bot fetches news (in minutes) | `20` |
 | `RESET_DATABASE` | Delete DB & start fresh on next run (`true`/`false`) | `false` |
 | `MIN_IMPACT_SCORE` | Minimum score required for a news to be published (higher = fewer posts) | `15` |
 | `MAX_POSTS_PER_DAY` | Maximum posts sent per day across all sources | `30` |
+
+</div>
 </details>
 
 <details>
 <summary><b>🤖 Telegram Settings</b></summary>
+
+<div align="center">
 
 | Variable | Description | Example |
 |----------|-------------|---------|
@@ -82,10 +96,14 @@ All configuration lives in `main.env`. Here's what every section does:
 | `ADMIN_TELEGRAM_ID` | Telegram user ID allowed to use the control panel (`0` = disabled) | `0` |
 | `BOT_PANEL` | Enable the Telegram admin panel (`true`/`false`) | `false` |
 | `BOT_PANEL_BOT_TOKEN` | Separate bot token for the control panel (leave empty to reuse the main bot) | `""` |
+
+</div>
 </details>
 
 <details>
 <summary><b>📡 RSS Feed URLs</b></summary>
+
+<div align="center">
 
 | Variable | Source | Example |
 |----------|--------|---------|
@@ -94,16 +112,22 @@ All configuration lives in `main.env`. Here's what every section does:
 | `REUTERS_RSS_URL` | Reuters World News | `http://feeds.reuters.com/reuters/worldNews` |
 | `INVESTING_RSS_URL` | Investing.com | `https://www.investing.com/rss/news_25.rss` |
 | `FOREXFACTORY_CALENDAR_URL` | ForexFactory Calendar | `https://nfs.faireconomy.media/ff_calendar_thisweek.xml` |
+
+</div>
 </details>
 
 <details>
 <summary><b>🧠 AI Summarization (OpenRouter)</b></summary>
+
+<div align="center">
 
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `OPENROUTER_API_KEY` | Your API key from [openrouter.ai/keys](https://openrouter.ai/keys) | `"sk-or-v1-..."` |
 | `OPENROUTER_MODEL` | AI model for summarization | `"moonshotai/kimi-k2.6:free"` |
 | `OPENROUTER_BASE_URL` | API base URL (change only for custom proxy) | `"https://openrouter.ai/api/v1"` |
+
+</div>
 </details>
 
 <details>
@@ -163,12 +187,16 @@ Set `BOT_PANEL=true` and `ADMIN_TELEGRAM_ID=your_id` in `main.env` to enable the
 News Score = Keyword Match Score + Source Score + Impact Bonus
 ```
 
+<div align="center">
+
 | Keyword | Score |
 |---------|-------|
 | Fed / Interest Rate / CPI | 5 |
 | Inflation / War / Bitcoin / ECB | 4 |
 | Oil / Bank / NASDAQ / S&P 500 | 3 |
 | Market / Economy / Gold / USD | 2 |
+
+</div>
 
 ---
 
@@ -183,7 +211,9 @@ News Score = Keyword Match Score + Source Score + Impact Bonus
 ---
 
 
-<img width="492" height="942" alt="image" src="https://github.com/user-attachments/assets/ee5da64b-2bb0-45dc-b702-ffd338c114f4" />
+<p align="center">
+  <img width="492" height="942" alt="image" src="https://github.com/user-attachments/assets/ee5da64b-2bb0-45dc-b702-ffd338c114f4" />
+</p>
 
 
 ---
