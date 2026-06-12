@@ -16,7 +16,6 @@ REUTERS_RSS_URL     = os.getenv("REUTERS_RSS_URL")
 CNBC_RSS_URL        = os.getenv("CNBC_RSS_URL")
 INVESTING_RSS_URL   = os.getenv("INVESTING_RSS_URL")
 YAHOO_RSS_URL       = os.getenv("YAHOO_RSS_URL")
-FOREXFACTORY_CALENDAR_URL = os.getenv("FOREXFACTORY_CALENDAR_URL")
 
 OPENAI_API_KEY  = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL    = os.getenv("OPENAI_MODEL")
@@ -28,15 +27,23 @@ OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL   = os.getenv("GEMINI_MODEL")
 
+FOREXFACTORY_CALENDAR_URL = os.getenv("FOREXFACTORY_CALENDAR_URL")
+CALENDAR_TIMEZONE         = os.getenv("CALENDAR_TIMEZONE", "America/New_York")
+FOREX_ALERT_IMPACTS       = os.getenv("FOREX_ALERT_IMPACTS", "High,Medium")
+
 TELEGRAM_BOT_TOKEN  = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
-BOT_PANEL_BOT_TOKEN = os.getenv("BOT_PANEL_BOT_TOKEN", "")
 
 MIN_IMPACT_SCORE    = int(os.getenv("MIN_IMPACT_SCORE", 7))
+FOREX_MIN_SCORE     = int(os.getenv("FOREX_MIN_SCORE", 5))
 MAX_POSTS_PER_DAY   = int(os.getenv("MAX_POSTS_PER_DAY", 10))
-RESET_DATABASE      = os.getenv("RESET_DATABASE", "false").strip().lower() == "true"
-BOT_PANEL           = os.getenv("BOT_PANEL", "false").strip().lower() == "true"
 
+RESET_DATABASE      = os.getenv("RESET_DATABASE", "false").strip().lower() == "true"
+
+BOT_PANEL_BOT_TOKEN = os.getenv("BOT_PANEL_BOT_TOKEN", "")
+ADMIN_TELEGRAM_ID   = os.getenv("ADMIN_TELEGRAM_ID", "")
+BOT_PANEL           = os.getenv("BOT_PANEL", "false").strip().lower() == "true"
 
 HIGH_IMPACT_KEYWORDS = json.loads(os.getenv("HIGH_IMPACT_KEYWORDS"))
 SOURCE_SCORE = json.loads(os.getenv("SOURCE_SCORE") ) 
+ACTIVE_SOURCES = [name for name, score in SOURCE_SCORE.items() if score > 0]

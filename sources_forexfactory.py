@@ -1,65 +1,73 @@
+
+import json, os, xml.etree.ElementTree as ET
 import requests
-import xml.etree.ElementTree as ET
-from sources_base import BaseRSSSource
-from rss_utils import fetch_og_image
 import config
+from logger import logger
+
+CACHE_PATH = os.path.join(os.path.dirname(__file__), "forex_cache.json")
 
 
-class ForexFactoryCalendar(BaseRSSSource):
+class ForexFactoryCalendar:
     name = "ForexFactory"
     rss_url = config.FOREXFACTORY_CALENDAR_URL
 
+    def _read_cache(self) -> list[dict] | None:
+        try:
+            if os.path.exists(CACHE_PATH):
+                with open(CACHE_PATH) as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return None
+
+    def _write_cache(self, events: list[dict]):
+        try:
+            with open(CACHE_PATH, "w") as f:
+                json.dump(events, f)
+        except Exception as e:
+            logger.warning(f"ForexFactory cache write error: {e}")
+
+    def _is_rate_limited(self, text: str) -> bool:
+        return "Rate Limited" in text or "Request Denied" in text or "429" in text[:200]
+
     def fetch(self) -> list[dict]:
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (X11; Linux x86_64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
+        try:
+            resp = requests.get(
+                self.rss_url,
+                timeout=15,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; ForexFactoryBot/1.0)"},
             )
-        }
-        resp = requests.get(self.rss_url, timeout=15, headers=headers)
-        resp.raise_for_status()
-        raw = resp.content.decode("windows-1252", errors="replace")
-        root = ET.fromstring(raw)
+            if self._is_rate_limited(resp.text):
+                logger.warning("ForexFactory rate limited — using cache")
+                cached = self._read_cache()
+                if cached:
+                    logger.info(f"ForexFactory: {len(cached)} events from cache")
+                    return cached
+                logger.error("ForexFactory: rate limited and no cache available")
+                return []
 
-        all_events = root.findall("event")
-
-        news_items = []
-        for event in all_events:
-            title = event.findtext("title", "")
-            country = event.findtext("country", "")
-            date_str = event.findtext("date", "")
-            time_str = event.findtext("time", "")
-            impact = event.findtext("impact", "")
-            forecast = event.findtext("forecast", "") or ""
-            previous = event.findtext("previous", "") or ""
-            url = event.findtext("url", "")
-
-            published = f"{date_str} {time_str}".strip()
-            content = self._build_content(title, country, impact, forecast, previous)
-            image_url = fetch_og_image(url) if url and impact == "High" else None
-
-            news_items.append({
-                "title": title,
-                "url": url,
-                "image_url": image_url,
-                "source": self.name,
-                "published_at": published,
-                "content": content,
-            }
-            )
-
-        return news_items
-
-    @staticmethod
-    def _build_content(
-        title: str, country: str, impact: str, forecast: str, previous: str
-    ) -> str:
-        parts = [f"[{country}] {title} — Impact: {impact}."]
-
-        if forecast or previous:
-            parts.append(
-                f"Market Forecast: {forecast or 'N/A'}, Previous: {previous or 'N/A'}."
-            )
-
-        return " ".join(parts)
+            resp.encoding = "windows-1252"
+            root = ET.fromstring(resp.text)
+            events = []
+            for event_elem in root.findall("event"):
+                event = {
+                    "title": event_elem.findtext("title", ""),
+                    "country": event_elem.findtext("country", ""),
+                    "date": event_elem.findtext("date", ""),
+                    "time": event_elem.findtext("time", ""),
+                    "impact": event_elem.findtext("impact", ""),
+                    "forecast": event_elem.findtext("forecast") or "",
+                    "previous": event_elem.findtext("previous") or "",
+                    "url": event_elem.findtext("url", ""),
+                }
+                events.append(event)
+            self._write_cache(events)
+            logger.info(f"ForexFactory: {len(events)} events fetched")
+            return events
+        except Exception as e:
+            logger.error(f"ForexFactory fetch error: {e}")
+            cached = self._read_cache()
+            if cached:
+                logger.info(f"ForexFactory: {len(cached)} events from cache (after error)")
+                return cached
+            return []

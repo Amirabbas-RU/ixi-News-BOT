@@ -11,6 +11,7 @@ class YahooRSS(BaseRSSSource):
         feed = feedparser.parse(self.rss_url)
         news_items = []
         
+        print(f"[Yahoo] feed entries found: {len(feed.entries)}")
 
         for entry in feed.entries:
             image_url = extract_image_url(entry)

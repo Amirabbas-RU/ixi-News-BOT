@@ -1,6 +1,6 @@
 from logger import logger
 from openai import OpenAI
-import config
+import config 
 
 
 # ایجاد کلاینت OpenRouter
@@ -26,7 +26,7 @@ def summarize_news_fa(title: str, content: str) -> dict:
         3. در انتها بر اساس تحلیل خودت، تاثیر مورد انتظار این خبر بر بازارهای مالی را خیلی کوتاه در یک خط بنویس
 
         قوانین مهم:
-        - تعداد کل کاراکترها (شامل کاراکترهای عنوان خبر و متن خبر و تحلیل انتهایی خبر) نباید از 1800 کاراکتر بیشتر شود
+        - تعداد کل کاراکترها (شامل کاراکترهای عنوان خبر و متن خبر و تحلیل انتهایی خبر) نباید از 950 کاراکتر بیشتر شود
         - لحن کاملاً خبری و حرفه‌ای باشد
         - تمرکز بر اثر خبر بر بازارهای مالی باشد
         - از اغراق، پیش‌بینی شخصی و جملات کلی پرهیز کن
@@ -59,23 +59,17 @@ def summarize_news_fa(title: str, content: str) -> dict:
                 {"role": "user", "content": prompt}
             ],
             temperature=0.2,
-            max_tokens=800
+            max_tokens=350
         )
 
         text = response.choices[0].message.content
-
-        if not text:
-            logger.error("OpenRouter returned empty content")
-            return None
-
+        
         if "عنوان فارسی:" not in text or "خلاصه فارسی:" not in text:
             logger.error("OpenAI returned invalid format")
             return None
 
         title_fa = text.split("عنوان فارسی:")[1].split("خلاصه فارسی:")[0].strip()
         summary_fa = text.split("خلاصه فارسی:")[1].strip()
-        if "تاثیر در بازارهای مالی" in summary_fa:
-            summary_fa = summary_fa.split("تاثیر در بازارهای مالی")[0].strip()
 
         if not title_fa or not summary_fa:
             logger.error("OpenAI returned empty title or summary")
@@ -87,8 +81,64 @@ def summarize_news_fa(title: str, content: str) -> dict:
         }
 
     except Exception as e:
-        err_str = str(e)
-        if "429" not in err_str:
-            logger.error(f"OpenRouter summarization error: {e}")
-        return None
+        logger.error(f"OpenRouter summarization error: {e}")
+        return {
+            "title_fa": f"خطا در ترجمه: {title[:50]}...",
+            "summary_fa": "متأسفانه خلاصه‌سازی با خطا مواجه شد. لطفاً به لینک اصلی خبر مراجعه کنید."
+        }
+
+
+#---------------------------------<< forex event analyzer >>---------------------------------
+def summarize_forex_event_fa(event: dict) -> str:
+    prompt = f"""
+    شما یک تحلیلگر حرفه‌ای بازارهای مالی هستید.
+
+    یک رویداد اقتصادی پیش رو داریم:
+
+    عنوان: {event['title']}
+    کشور/ارز: {event['country']}
+    میزان تاثیر: {event['impact']}
+    پیش‌بینی: {event.get('forecast', 'نامشخص')}
+    مقدار قبلی: {event.get('previous', 'نامشخص')}
+
+    لطفاً یک تحلیل کوتاه و حرفه‌ای به فارسی ارائه بده:
+    ۱. توضیح دهید این رویداد چیست و چرا مهم است
+    ۲. پیش‌بینی بازار نسبت به مقدار قبلی چه پیامی دارد
+    ۳. تاثیر مورد انتظار بر بازارهای مالی را تحلیل کنید
+
+    قوانین:
+    - حداکثر ۴۰۰ کاراکتر
+    - لحن کاملاً خبری و حرفه‌ای
+    - از اغراق و پیش‌بینی شخصی پرهیز کن
+    - خروجی فقط متن ساده (بدون مارک داون)
+    """
+
+    try:
+        response = client.chat.completions.create(
+            model=config.OPENROUTER_MODEL,
+            messages=[
+                {"role": "system", "content": "شما یک تحلیلگر حرفه‌ای بازارهای مالی هستید."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2,
+            max_tokens=300
+        )
+        content = response.choices[0].message.content
+        if not content:
+            raise ValueError("Empty response")
+        text = content.strip()
+        if not text:
+            raise ValueError("Empty response")
+        return text
+    except Exception as e:
+        logger.error(f"Forex event analysis error: {e}")
+        impact_map = {"High": "پر影响", "Medium": "متوسط", "Low": "کم"}
+        impact_fa = impact_map.get(event.get("impact", ""), "")
+        return (
+            f"⚠️ رویداد اقتصادی: {event['title']} | "
+            f"کشور: {event['country']} | "
+            f"تاثیر: {impact_fa} | "
+            f"پیش‌بینی: {event.get('forecast', 'نامشخص')} | "
+            f"قبلی: {event.get('previous', 'نامشخص')}"
+        )
 
