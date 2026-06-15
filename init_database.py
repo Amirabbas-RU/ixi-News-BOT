@@ -66,6 +66,11 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    try:
+        cursor.execute("ALTER TABLE forex_events ADD COLUMN alert_message_id INTEGER DEFAULT NULL")
+    except sqlite3.OperationalError:
+        pass
+
     for col, typ in [("analysis", "TEXT"), ("news_inserted", "INTEGER DEFAULT 0")]:
         try:
             cursor.execute(f"ALTER TABLE forex_events ADD COLUMN {col} {typ}")
