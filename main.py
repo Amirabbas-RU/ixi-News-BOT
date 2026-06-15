@@ -1,4 +1,3 @@
-
 import set_path
 import config
 import init_database
@@ -6,7 +5,7 @@ import os
 import time
 import telebot
 import sqlite3
-from logger import logger
+from logger import logger, green
 import re
 import sys
 import atexit
@@ -19,26 +18,27 @@ from sources_forexfactory import ForexFactoryCalendar
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-#---------------------------------<< in order to avoid freeze .exe file >>---------------------------------
+# ---------------------------------<< in order to avoid freeze .exe file >>---------------------------------
 import multiprocessing
+
 if __name__ == "__main__":
     multiprocessing.freeze_support()
 
-#---------------------------------<< define global variables and load data >>---------------------------------
+# ---------------------------------<< define global variables and load data >>---------------------------------
 NEWS_UPDATE_INTERVAL_MINUTES = config.NEWS_UPDATE_INTERVAL_MINUTES
 
 DB_NAME = config.DB_NAME
 DB_PATH = config.DB_PATH
 
-OPENROUTER_API_KEY  = config.OPENROUTER_API_KEY
-OPENROUTER_MODEL    = config.OPENROUTER_MODEL
+OPENROUTER_API_KEY = config.OPENROUTER_API_KEY
+OPENROUTER_MODEL = config.OPENROUTER_MODEL
 OPENROUTER_BASE_URL = config.OPENROUTER_BASE_URL
 
-TELEGRAM_BOT_TOKEN  = config.TELEGRAM_BOT_TOKEN
+TELEGRAM_BOT_TOKEN = config.TELEGRAM_BOT_TOKEN
 TELEGRAM_CHANNEL_ID = config.TELEGRAM_CHANNEL_ID
 
-MIN_IMPACT_SCORE    = config.MIN_IMPACT_SCORE
-FOREX_MIN_SCORE     = config.FOREX_MIN_SCORE
+MIN_IMPACT_SCORE = config.MIN_IMPACT_SCORE
+FOREX_MIN_SCORE = config.FOREX_MIN_SCORE
 
 HIGH_IMPACT_KEYWORDS = config.HIGH_IMPACT_KEYWORDS
 SOURCE_SCORE = config.SOURCE_SCORE
@@ -49,105 +49,109 @@ FOREX_ALERT_IMPACTS = [x.strip() for x in config.FOREX_ALERT_IMPACTS.split(",")]
 FOREX_IMPACT_EMOJIS = {"High": "🔴", "Medium": "🟡", "Low": "🟢"}
 FOREX_IMPACT_LABELS = {"High": "بالا", "Medium": "متوسط", "Low": "پایین"}
 
-_first_run = True
+_last_shown_date = None
+db_conn = None
 
 
-#---------------------------------<< setup telegram bot >>---------------------------------
+# ---------------------------------<< setup telegram bot >>---------------------------------
 my_bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
-bot_username = my_bot.get_me().username 
+bot_username = my_bot.get_me().username
 
 
-#---------------------------------<< program main body >>---------------------------------
+# ---------------------------------<< program main body >>---------------------------------
 def insert_news(news: dict) -> bool:
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT 1 FROM news WHERE url = ? LIMIT 1",
-                (news["url"],)
-            )
-            if cursor.fetchone():
-                return False
+        cursor = db_conn.cursor()
+        cursor.execute("SELECT 1 FROM news WHERE url = ? LIMIT 1", (news["url"],))
+        if cursor.fetchone():
+            return False
 
-            cursor.execute("""
-            INSERT INTO news (title, url, image_url, source, published_at, content)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """, (
+        cursor.execute(
+            """
+        INSERT INTO news (title, url, image_url, source, published_at, content)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+            (
                 news["title"],
                 news["url"],
                 news["image_url"],
                 news["source"],
                 news["published_at"],
-                news["content"]
-            ))
-            conn.commit()
-            return True
+                news["content"],
+            ),
+        )
+        db_conn.commit()
+        return True
     except Exception as e:
+        db_conn.rollback()
         logger.warning(f"Insert failed: {e}")
         return False
 
 
 def update_news_summary(news_id: int, summary: str):
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute("UPDATE news SET summary = ? WHERE id = ?", (summary, news_id))
-            conn.commit()
+        db_conn.execute("UPDATE news SET summary = ? WHERE id = ?", (summary, news_id))
+        db_conn.commit()
     except sqlite3.Error as e:
+        db_conn.rollback()
         logger.error(f"Database error in update_news_summary: {e}")
 
 
 def get_unsent_high_score_news(threshold: float = 7.0, source: str = None):
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            cursor = conn.cursor()
-            query = """
-                SELECT id, title, content, source, importance_score, image_url
-                FROM news
-                WHERE importance_score >= ?
-                    AND published = 0
-            """
-            params = [threshold]
-            if source:
-                query += " AND source = ?"
-                params.append(source)
-            query += " ORDER BY importance_score DESC"
-            cursor.execute(query, params)
-            rows = cursor.fetchall()
+        cursor = db_conn.cursor()
+        query = """
+            SELECT id, title, content, source, importance_score, image_url, url
+            FROM news
+            WHERE importance_score >= ?
+                AND published = 0
+        """
+        params = [threshold]
+        if source:
+            query += " AND source = ?"
+            params.append(source)
+        query += " ORDER BY importance_score DESC"
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
     except sqlite3.OperationalError as e:
         logger.error(f"DB error in get_unsent_high_score_news: {e}")
         return []
 
     news_list = []
     for row in rows:
-        news_list.append({
-            "id": row[0],
-            "title": row[1],
-            "content": row[2],
-            "source": row[3],
-            "importance_score": row[4],
-            "image_url": row[5]
-        })
+        news_list.append(
+            {
+                "id": row[0],
+                "title": row[1],
+                "content": row[2],
+                "source": row[3],
+                "importance_score": row[4],
+                "image_url": row[5],
+                "url": row[6],
+            }
+        )
     return news_list
 
 
 def mark_news_as_summarized(news_id):
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute("UPDATE news SET summarized = 1 WHERE id = ?", (news_id,))
-            conn.commit()
+        db_conn.execute("UPDATE news SET summarized = 1 WHERE id = ?", (news_id,))
+        db_conn.commit()
     except sqlite3.OperationalError as e:
+        db_conn.rollback()
         logger.error(f"DB error in mark_news_as_summarized: {e}")
+
 
 def mark_news_as_sent(news_id):
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute("UPDATE news SET published = 1 WHERE id = ?", (news_id,))
-            conn.commit()
+        db_conn.execute("UPDATE news SET published = 1 WHERE id = ?", (news_id,))
+        db_conn.commit()
     except sqlite3.OperationalError as e:
+        db_conn.rollback()
         logger.error(f"DB error in mark_news_as_sent: {e}")
 
 
-#---------------------------------<< news scoring section >>---------------------------------
+# ---------------------------------<< news scoring section >>---------------------------------
 def calculate_keyword_score(text: str) -> int:
     score = 0
     text_lower = text.lower()
@@ -156,6 +160,7 @@ def calculate_keyword_score(text: str) -> int:
             score += value
     return score
 
+
 def calculate_total_score(news_item: dict) -> float:
     score = calculate_keyword_score(news_item["title"])
     score += calculate_keyword_score(news_item.get("content", ""))
@@ -163,30 +168,18 @@ def calculate_total_score(news_item: dict) -> float:
     return score
 
 
-
 def escape_markdown_v2(text: str) -> str:
     if not text:
         return ""
     escape_chars = r"_*[]()~`>#+-=|{}.!\\"
-    return re.sub(f"([{re.escape(escape_chars)}])", r"\\\1", text) 
+    return re.sub(f"([{re.escape(escape_chars)}])", r"\\\1", text)
 
 
-def send_with_retry(bot, chat_id, content, image_url=None, max_retries=3):
-    """
-    ارسال پیام به تلگرام با قابلیت retry
-    
-    Args:
-        bot: شیء تلگرام بات
-        chat_id: آیدی کانال/چت
-        content: محتوای پیام
-        image_url: آدرس تصویر (اختیاری)
-        max_retries: حداکثر تعداد تلاش‌ها
-    
-    Returns:
-        bool: موفقیت آمیز بودن ارسال
-    """
-    retry_delays = [2, 5, 10]  # تاخیرها به ثانیه
-    
+def send_with_retry(
+    bot, chat_id, content, image_url=None, max_retries=3, reply_to_message_id=None
+):
+    retry_delays = [2, 5, 10]
+
     for attempt in range(max_retries):
         try:
             if image_url:
@@ -194,97 +187,132 @@ def send_with_retry(bot, chat_id, content, image_url=None, max_retries=3):
                     chat_id=chat_id,
                     photo=image_url,
                     caption=content,
-                    parse_mode="MarkdownV2"
+                    parse_mode="MarkdownV2",
+                    reply_to_message_id=reply_to_message_id,
                 )
             else:
                 bot.send_message(
                     chat_id=chat_id,
                     text=content,
-                    parse_mode="MarkdownV2"
+                    parse_mode="MarkdownV2",
+                    reply_to_message_id=reply_to_message_id,
                 )
-            
-            logger.info(f"Message sent successfully (attempt {attempt + 1})")
+
+            logger.info(green(f"Message sent successfully (attempt {attempt + 1})"))
             return True
-            
+
         except Exception as e:
             logger.warning(f"Send attempt {attempt + 1} failed: {e}")
-            
+
             if attempt < max_retries - 1:
                 delay = retry_delays[attempt] if attempt < len(retry_delays) else 10
                 logger.info(f"Retrying in {delay} seconds...")
                 time.sleep(delay)
             else:
                 logger.error(f"Failed to send after {max_retries} attempts")
-                
+
     return False
 
 
-#---------------------------------<< Forex Calendar Functions >>---------------------------------
+# ---------------------------------<< Forex Calendar Functions >>---------------------------------
 def insert_forex_event(event: dict) -> bool:
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT 1 FROM forex_events WHERE url = ? LIMIT 1",
-                (event["url"],)
-            )
-            if cursor.fetchone():
-                return False
-            cursor.execute("""
-                INSERT INTO forex_events (title, country, event_date, event_time, impact, forecast, previous, url)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                event["title"], event["country"], event["date"], event["time"],
-                event["impact"], event["forecast"], event["previous"], event["url"]
-            ))
-            conn.commit()
-            return True
+        cursor = db_conn.cursor()
+        cursor.execute(
+            "SELECT 1 FROM forex_events WHERE url = ? LIMIT 1", (event["url"],)
+        )
+        if cursor.fetchone():
+            return False
+        cursor.execute(
+            """
+            INSERT INTO forex_events (title, country, event_date, event_time, impact, forecast, previous, url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            (
+                event["title"],
+                event["country"],
+                event["date"],
+                event["time"],
+                event["impact"],
+                event["forecast"],
+                event["previous"],
+                event["url"],
+            ),
+        )
+        db_conn.commit()
+        return True
     except Exception as e:
+        db_conn.rollback()
         logger.warning(f"Insert forex event failed: {e}")
         return False
 
 
 def get_pending_forex_alerts() -> list[dict]:
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT id, title, country, event_date, event_time, impact,
-                       forecast, previous, url, analysis,
-                       alert_pre_sent, alert_15min_sent, alert_30min_sent, result_sent, news_inserted
-                FROM forex_events
-                WHERE news_inserted = 0
-                ORDER BY event_date, event_time
-            """)
-            cols = ["id", "title", "country", "event_date", "event_time", "impact",
-                    "forecast", "previous", "url", "analysis",
-                    "alert_pre_sent", "alert_15min_sent", "alert_30min_sent", "result_sent", "news_inserted"]
-            return [dict(zip(cols, row)) for row in cursor.fetchall()]
+        today_str = datetime.now().astimezone().strftime("%m-%d-%Y")
+        cursor = db_conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, title, country, event_date, event_time, impact,
+                   forecast, previous, url, analysis,
+                   alert_pre_sent, alert_15min_sent, alert_30min_sent, result_sent, news_inserted
+            FROM forex_events
+            WHERE news_inserted = 0 OR event_date = ?
+            ORDER BY event_date, event_time
+        """,
+            (today_str,),
+        )
+        cols = [
+            "id",
+            "title",
+            "country",
+            "event_date",
+            "event_time",
+            "impact",
+            "forecast",
+            "previous",
+            "url",
+            "analysis",
+            "alert_pre_sent",
+            "alert_15min_sent",
+            "alert_30min_sent",
+            "result_sent",
+            "news_inserted",
+        ]
+        return [dict(zip(cols, row)) for row in cursor.fetchall()]
     except Exception as e:
         logger.error(f"Get pending forex alerts error: {e}")
         return []
 
 
 def mark_forex_alert(alert_type: str, event_id: int):
-    col_map = {"pre": "alert_pre_sent", "15min": "alert_15min_sent",
-               "30min": "alert_30min_sent", "result": "result_sent", "news": "news_inserted"}
+    col_map = {
+        "pre": "alert_pre_sent",
+        "15min": "alert_15min_sent",
+        "30min": "alert_30min_sent",
+        "result": "result_sent",
+        "news": "news_inserted",
+    }
     col = col_map.get(alert_type)
     if not col:
         return
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute(f"UPDATE forex_events SET {col} = 1 WHERE id = ?", (event_id,))
-            conn.commit()
+        db_conn.execute(f"UPDATE forex_events SET {col} = 1 WHERE id = ?", (event_id,))
+        db_conn.commit()
     except Exception as e:
+        db_conn.rollback()
         logger.error(f"Mark forex alert error: {e}")
 
 
 def update_forex_analysis(event_id: int, analysis: str):
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute("UPDATE forex_events SET analysis = ? WHERE id = ?", (analysis, event_id))
-            conn.commit()
+        db_conn.execute(
+            "UPDATE forex_events SET analysis = ? WHERE id = ?",
+            (analysis, event_id),
+        )
+        db_conn.commit()
     except Exception as e:
+        db_conn.rollback()
         logger.error(f"Update forex analysis error: {e}")
 
 
@@ -297,39 +325,48 @@ def parse_forex_datetime(date_str: str, time_str: str) -> datetime | None:
         return None
 
 
-def send_forex_message(text: str) -> bool:
+def send_forex_message(text: str) -> int | None:
     for attempt in range(3):
         try:
-            my_bot.send_message(chat_id=TELEGRAM_CHANNEL_ID, text=text, parse_mode=None)
-            logger.info("Forex alert sent successfully")
-            return True
+            msg = my_bot.send_message(
+                chat_id=TELEGRAM_CHANNEL_ID, text=text, parse_mode=None
+            )
+            logger.info(green("Forex alert sent successfully"))
+            return msg.message_id
         except Exception as e:
             logger.warning(f"Forex send attempt {attempt + 1} failed: {e}")
             if attempt < 2:
                 time.sleep(3)
-    return False
+    return None
 
 
 def mark_past_forex_events_done():
     try:
         now_dt = datetime.now().astimezone()
-        with sqlite3.connect(DB_PATH) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, event_date, event_time FROM forex_events WHERE news_inserted = 0")
-            for row in cursor.fetchall():
-                ev_id, ev_date, ev_time = row
-                ev_dt = parse_forex_datetime(ev_date, ev_time)
-                if ev_dt and (ev_dt - now_dt).total_seconds() / 60.0 < -60:
-                    conn.execute("UPDATE forex_events SET news_inserted = 1 WHERE id = ?", (ev_id,))
-            conn.commit()
+        cursor = db_conn.cursor()
+        cursor.execute(
+            "SELECT id, event_date, event_time FROM forex_events WHERE news_inserted = 0"
+        )
+        for row in cursor.fetchall():
+            ev_id, ev_date, ev_time = row
+            ev_dt = parse_forex_datetime(ev_date, ev_time)
+            if ev_dt and (ev_dt - now_dt).total_seconds() / 60.0 < -60:
+                db_conn.execute(
+                    "UPDATE forex_events SET news_inserted = 1 WHERE id = ?",
+                    (ev_id,),
+                )
+        db_conn.commit()
     except Exception as e:
+        db_conn.rollback()
         logger.error(f"Mark past events error: {e}")
 
 
 def insert_forex_into_news(ev: dict):
     try:
         title = ev["title"]
-        url = ev.get("url", f"https://www.forexfactory.com/calendar?day={ev['event_date']}")
+        url = ev.get(
+            "url", f"https://www.forexfactory.com/calendar?day={ev['event_date']}"
+        )
         content_parts = []
         if ev.get("forecast"):
             content_parts.append(f"Forecast: {ev['forecast']}")
@@ -344,17 +381,28 @@ def insert_forex_into_news(ev: dict):
         passes_forex = ev["impact"] in FOREX_ALERT_IMPACTS and s >= FOREX_MIN_SCORE
         importance_score = max(s, FOREX_MIN_SCORE) if passes_forex else s
 
-        with sqlite3.connect(DB_PATH) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT 1 FROM news WHERE url = ?", (url,))
-            if cursor.fetchone():
-                return
-            cursor.execute("""
-                INSERT INTO news (title, url, image_url, source, published_at, content, importance_score)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (title, url, None, "ForexFactory", f"{ev['event_date']} {ev['event_time']}", content, importance_score))
-            conn.commit()
+        cursor = db_conn.cursor()
+        cursor.execute("SELECT 1 FROM news WHERE url = ?", (url,))
+        if cursor.fetchone():
+            return
+        cursor.execute(
+            """
+            INSERT INTO news (title, url, image_url, source, published_at, content, importance_score)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+            (
+                title,
+                url,
+                None,
+                "ForexFactory",
+                f"{ev['event_date']} {ev['event_time']}",
+                content,
+                importance_score,
+            ),
+        )
+        db_conn.commit()
     except Exception as e:
+        db_conn.rollback()
         logger.error(f"Insert forex into news error: {e}")
 
 
@@ -380,29 +428,30 @@ def forex_event_to_news_item(ev: dict) -> dict:
 
 def _print_forex_table(pending: list[dict], now_dt: datetime):
     lines = []
-    sep = "─" * 100
-    lines.append(f"── ForexFactory Pending Events ({len(pending)}) {'─' * 49}")
-    header = f"{'Impact':<10} {'Country':<10} {'Title':<50} {'Date':<15} {'Time':<10} {'In':<8}"
+    sep = "─" * 106
+    lines.append(f"── ForexFactory Pending Events ({len(pending)}) {'─' * 52}")
+    header = f"{'S':<3} {'Impact':<10} {'Country':<10} {'Title':<50} {'Date':<15} {'Time':<10} {'In':<8}"
     lines.append(header)
-    lines.append("─" * 100)
+    lines.append("─" * 106)
     for ev in pending:
         ev_dt = parse_forex_datetime(ev["event_date"], ev["event_time"])
         if ev_dt is None:
             continue
         mins = (ev_dt - now_dt).total_seconds() / 60.0
-        in_str = f"{mins:+.0f}m" if abs(mins) < 10000 else f"{mins/60:+.0f}h"
+        in_str = f"{mins:+.0f}m" if abs(mins) < 10000 else f"{mins / 60:+.0f}h"
         title = ev["title"][:48]
+        status = "✅" if ev.get("alert_pre_sent") else "·"
         lines.append(
-            f"{ev['impact']:<10} {ev['country']:<10} {title:<50} "
+            f"{status:<3} {ev['impact']:<10} {ev['country']:<10} {title:<50} "
             f"{ev['event_date']:<15} {ev['event_time']:<10} {in_str:<8}"
         )
-    lines.append("─" * 100)
+    lines.append("─" * 106)
     for line in lines:
         logger.info(line)
 
 
 def check_forex_calendar():
-    global _first_run
+    global _last_shown_date
     if not FOREXFACTORY_CALENDAR_URL:
         return
 
@@ -414,7 +463,7 @@ def check_forex_calendar():
         if insert_forex_event(event):
             new_count += 1
     if new_count:
-        logger.info(f"{new_count} new forex events stored")
+        logger.info(green(f"{new_count} new forex events stored"))
 
     mark_past_forex_events_done()
 
@@ -422,20 +471,25 @@ def check_forex_calendar():
     now_dt = datetime.now().astimezone()
     logger.info(f"ForexFactory: {len(pending)} pending events to check")
 
-    if _first_run and pending:
+    today_str = now_dt.strftime("%Y-%m-%d")
+    if today_str != _last_shown_date and pending:
         _print_forex_table(pending, now_dt)
-        _first_run = False
+        _last_shown_date = today_str
 
     for ev in pending:
         ev_dt = parse_forex_datetime(ev["event_date"], ev["event_time"])
         if ev_dt is None:
-            logger.warning(f"Forex event '{ev['title']}' on {ev['event_date']} — could not parse time, skipping")
+            logger.warning(
+                f"Forex event '{ev['title']}' on {ev['event_date']} — could not parse time, skipping"
+            )
             continue
 
         minutes_until = (ev_dt - now_dt).total_seconds() / 60.0
 
         if ev["impact"] not in FOREX_ALERT_IMPACTS:
-            logger.info(f"    → Impact '{ev['impact']}' not in alert list, marking as done")
+            logger.info(
+                f"    → Impact '{ev['impact']}' not in alert list, marking as done"
+            )
             mark_forex_alert("news", ev["id"])
             continue
 
@@ -445,7 +499,7 @@ def check_forex_calendar():
 
         if 0 <= minutes_until <= alert_window and not ev["alert_pre_sent"]:
             mins = round(minutes_until)
-            logger.info(f"    → Sending pre-alert ({mins} min before release)")
+            logger.info(green(f"    → Sending pre-alert ({mins} min before release)"))
             title_fa_result = summarize_news_fa(ev["title"], "")
             title_fa = title_fa_result.get("title_fa", "") if title_fa_result else ""
             title_line = f"{title_fa} ({ev['title']})" if title_fa else ev["title"]
@@ -457,9 +511,18 @@ def check_forex_calendar():
                 f"🚦 {ev['country']} {impact_emoji} {impact_label}\n"
                 f"🗓 {title_line}{extra}"
             )
-            if send_forex_message(text):
+            msg_id = send_forex_message(text)
+            if msg_id is not None:
+                try:
+                    db_conn.execute(
+                        "UPDATE forex_events SET alert_message_id = ? WHERE id = ?",
+                        (msg_id, ev["id"]),
+                    )
+                    db_conn.commit()
+                except Exception:
+                    db_conn.rollback()
                 mark_forex_alert("pre", ev["id"])
-                logger.info(f"    ✓ Pre-alert sent for '{ev['title']}'")
+                logger.info(green(f"    ✓ Pre-alert sent for '{ev['title']}'"))
             else:
                 logger.error(f"    ✗ Failed to send pre-alert for '{ev['title']}'")
         elif 0 <= minutes_until <= alert_window and ev["alert_pre_sent"]:
@@ -470,10 +533,10 @@ def check_forex_calendar():
             mark_forex_alert("news", ev["id"])
             insert_forex_into_news(ev)
 
-    logger.info("ForexFactory alert check complete")
+    logger.info(green("ForexFactory alert check complete"))
 
 
-#---------------------------------<< Main Function >>---------------------------------
+# ---------------------------------<< Main Function >>---------------------------------
 def main():
     try:
         check_forex_calendar()
@@ -483,7 +546,11 @@ def main():
             "Yahoo": YahooRSS,
         }
 
-        sources = [SOURCE_CLASSES[name]() for name in config.ACTIVE_SOURCES if name in SOURCE_CLASSES]
+        sources = [
+            SOURCE_CLASSES[name]()
+            for name in config.ACTIVE_SOURCES
+            if name in SOURCE_CLASSES
+        ]
 
         total_new = 0
 
@@ -502,26 +569,29 @@ def main():
             logger.info("No news RSS sources enabled")
 
         # ---------- Score news ----------
-        conn = None
         try:
-            with sqlite3.connect(DB_PATH) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT id, title, content, source FROM news WHERE importance_score IS NULL")
-                rows = cursor.fetchall()
+            cursor = db_conn.cursor()
+            cursor.execute(
+                "SELECT id, title, content, source FROM news WHERE importance_score IS NULL"
+            )
+            rows = cursor.fetchall()
 
-                for row in rows:
-                    news_id, title, content, source = row
-                    news_item = {"title": title, "content": content, "source": source}
-                    score = calculate_total_score(news_item)
-                    cursor.execute("UPDATE news SET importance_score = ? WHERE id = ?", (score, news_id))
+            for row in rows:
+                news_id, title, content, source = row
+                news_item = {"title": title, "content": content, "source": source}
+                score = calculate_total_score(news_item)
+                cursor.execute(
+                    "UPDATE news SET importance_score = ? WHERE id = ?",
+                    (score, news_id),
+                )
 
-                conn.commit()
+            db_conn.commit()
 
         except sqlite3.Error as e:
+            db_conn.rollback()
             logger.error(f"Database error: {e}")
 
         logger.info("Importance scores updated for new news")
-
 
         # ---------- Helper: process & send a batch of news ----------
         def _process_news_batch(news_batch: list, batch_label: str):
@@ -539,7 +609,9 @@ def main():
                 result = summarize_news_fa(title, content)
 
                 if not result or not result.get("title_fa"):
-                    logger.warning(f"{batch_label} ID {news_id} — summarization failed, marking as published")
+                    logger.warning(
+                        f"{batch_label} ID {news_id} — summarization failed, marking as published"
+                    )
                     mark_news_as_summarized(news_id)
                     mark_news_as_sent(news_id)
                     continue
@@ -550,51 +622,95 @@ def main():
                 try:
                     update_news_summary(news_id, summary_fa)
                     mark_news_as_summarized(news_id)
-                    logger.info(f"{batch_label} ID {news_id} summarized successfully")
+                    logger.info(
+                        green(f"{batch_label} ID {news_id} summarized successfully")
+                    )
                 except Exception as e:
-                    logger.error(f"Database update error for {batch_label} ID {news_id}: {e}")
+                    logger.error(
+                        f"Database update error for {batch_label} ID {news_id}: {e}"
+                    )
                     continue
+
+                reply_to = None
+                if batch_label == "ForexFactory":
+                    news_url = news.get("url")
+                    if news_url:
+                        try:
+                            cursor = db_conn.cursor()
+                            cursor.execute(
+                                "SELECT alert_message_id FROM forex_events WHERE url = ?",
+                                (news_url,),
+                            )
+                            row = cursor.fetchone()
+                            if row and row[0] is not None:
+                                reply_to = row[0]
+                        except Exception:
+                            pass
 
                 safe_title = escape_markdown_v2(title_fa)
                 safe_summary = escape_markdown_v2(summary_fa)
-                message_text = f"*{safe_title}*\n\n{safe_summary}\n\n💎💎 ||*HAMID EYVAZI*|| 💎💎"
+                message_text = (
+                    f"*{safe_title}*\n\n{safe_summary}\n\n💎💎 ||@ForexEyvazi|| 💎💎"
+                )
 
                 success = False
                 try:
                     if image_url:
                         success = send_with_retry(
-                            bot=my_bot, chat_id=TELEGRAM_CHANNEL_ID,
-                            content=message_text, image_url=image_url, max_retries=3
+                            bot=my_bot,
+                            chat_id=TELEGRAM_CHANNEL_ID,
+                            content=message_text,
+                            image_url=image_url,
+                            max_retries=3,
+                            reply_to_message_id=reply_to,
                         )
                     if not success:
                         success = send_with_retry(
-                            bot=my_bot, chat_id=TELEGRAM_CHANNEL_ID,
-                            content=message_text, image_url=None, max_retries=2
+                            bot=my_bot,
+                            chat_id=TELEGRAM_CHANNEL_ID,
+                            content=message_text,
+                            image_url=None,
+                            max_retries=2,
+                            reply_to_message_id=reply_to,
                         )
                     if success:
                         mark_news_as_sent(news_id)
-                        logger.info(f"{batch_label} ID {news_id} sent to Telegram successfully")
+                        logger.info(
+                            green(
+                                f"{batch_label} ID {news_id} sent to Telegram successfully"
+                            )
+                        )
                         sent += 1
                     else:
-                        logger.error(f"Failed to send {batch_label} ID {news_id} after all retries")
+                        logger.error(
+                            f"Failed to send {batch_label} ID {news_id} after all retries"
+                        )
                 except Exception as e:
-                    logger.error(f"Unexpected error during sending for {batch_label} ID {news_id}: {e}")
+                    logger.error(
+                        f"Unexpected error during sending for {batch_label} ID {news_id}: {e}"
+                    )
 
                 time.sleep(10)
 
             if sent == total:
-                logger.info(f"All {sent} {batch_label} news sent to Telegram!")
+                logger.info(green(f"All {sent} {batch_label} news sent to Telegram!"))
             else:
-                logger.warning(f"Sent {sent} out of {total} {batch_label} news. {total - sent} remaining.")
-
+                logger.warning(
+                    f"Sent {sent} out of {total} {batch_label} news. {total - sent} remaining."
+                )
 
         # ---------- Process RSS news (threshold = MIN_IMPACT_SCORE) ----------
-        rss_news = [n for n in get_unsent_high_score_news(threshold=MIN_IMPACT_SCORE)
-                    if n["source"] != "ForexFactory"]
+        rss_news = [
+            n
+            for n in get_unsent_high_score_news(threshold=MIN_IMPACT_SCORE)
+            if n["source"] != "ForexFactory"
+        ]
         _process_news_batch(rss_news, "RSS")
 
         # ---------- Process ForexFactory news (threshold = FOREX_MIN_SCORE) ----------
-        forex_news = get_unsent_high_score_news(threshold=FOREX_MIN_SCORE, source="ForexFactory")
+        forex_news = get_unsent_high_score_news(
+            threshold=FOREX_MIN_SCORE, source="ForexFactory"
+        )
         _process_news_batch(forex_news, "ForexFactory")
 
     except Exception as e:
@@ -602,8 +718,7 @@ def main():
         raise
 
 
-
-#---------------------------------<< optional control panel >>---------------------------------
+# ---------------------------------<< optional control panel >>---------------------------------
 ctrl_bot = None
 if config.BOT_PANEL:
     from control_bot import register_handlers
@@ -620,14 +735,16 @@ if config.BOT_PANEL:
     logger.info("Control panel enabled (manual polling in main loop).")
 
 
-#---------------------------------<< Main Section >>---------------------------------
+# ---------------------------------<< Main Section >>---------------------------------
 if __name__ == "__main__":
     LOCK_PATH = os.path.join(set_path.base_path, "bot.lock")
     try:
         with open(LOCK_PATH, "x") as f:
             f.write(str(os.getpid()))
     except FileExistsError:
-        logger.error("Another bot instance is already running (bot.lock exists). Exiting.")
+        logger.error(
+            "Another bot instance is already running (bot.lock exists). Exiting."
+        )
         sys.exit(1)
 
     def _remove_lock():
@@ -635,7 +752,10 @@ if __name__ == "__main__":
             os.remove(LOCK_PATH)
         except Exception:
             pass
+
     atexit.register(_remove_lock)
+
+    db_conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 
     logger.info(f"Bot started! Running every {NEWS_UPDATE_INTERVAL_MINUTES} minutes...")
 
@@ -643,10 +763,10 @@ if __name__ == "__main__":
         try:
             logger.info("Starting scheduled news fetch...")
             main()
-            logger.info("Scheduled run completed.")
+            logger.info(green("Scheduled run completed."))
         except Exception as e:
             logger.exception(f"Error occurred in job: {e}")
-    
+
     def _process_panel():
         if not ctrl_bot:
             return

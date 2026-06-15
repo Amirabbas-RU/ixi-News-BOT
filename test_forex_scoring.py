@@ -60,7 +60,7 @@ def main():
     #
     # # For next 3 days:
     days_back = 0
-    days_ahead = 0
+    days_ahead = 1
     #
     # # For full week (past 3 + next 4):
     # days_back = 3
