@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+logs/
+*.db
+*.lock
+forex_cache.json
+.marscode/
