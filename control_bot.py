@@ -5,8 +5,9 @@ import os
 import re
 import sys
 from logger import logger
+import set_path
 
-ENV_PATH = os.path.join(os.path.dirname(__file__), "main.env")
+ENV_PATH = os.path.join(set_path.base_path, "main.env")
 ITEMS_PER_PAGE = 20
 user_state = {}
 
@@ -39,7 +40,6 @@ def _read_env_section(key: str):
             continue
         if re.match(rf"^{re.escape(key)}\s*=", stripped):
             start = i
-            break
     if start < 0:
         return lines, 0, 0
     value_part = lines[start].strip()
@@ -60,7 +60,10 @@ def _get_env_raw(key: str) -> str:
     with open(ENV_PATH, encoding="utf-8") as f:
         lines = f.readlines()
     raw = "".join(lines[s:e])
-    m = re.match(rf"^{key}\s*=\s*(?P<q>['\"]?)(?P<val>.*?)(?P=q)\s*$", raw.strip(), re.DOTALL)
+    raw = re.sub(r"\s*#.*$", "", raw.strip(), flags=re.MULTILINE)
+    m = re.match(
+        rf"^{key}\s*=\s*(?P<q>['\"]?)(?P<val>.*?)(?P=q)\s*$", raw, re.DOTALL
+    )
     return m.group("val").strip() if m else raw.split("=", 1)[-1].strip().strip("'\"")
 
 
@@ -73,11 +76,22 @@ def _get_env_json(key: str) -> dict:
 
 
 def _set_env_line(key: str, value: str):
-    lines, s, e = _read_env_section(key)
-    if s == e:
-        lines.append(f"{key} = {value}\n")
+    with open(ENV_PATH, encoding="utf-8") as f:
+        lines = f.readlines()
+    match_indices = []
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        if re.match(rf"^{re.escape(key)}\s*=", stripped):
+            match_indices.append(i)
+    if match_indices:
+        insert_pos = match_indices[-1]
+        for idx in reversed(match_indices):
+            del lines[idx]
+        lines.insert(insert_pos, f"{key} = {value}\n")
     else:
-        lines[s:e] = [f"{key} = {value}\n"]
+        lines.append(f"{key} = {value}\n")
     with open(ENV_PATH, "w", encoding="utf-8") as f:
         f.writelines(lines)
 
@@ -415,8 +429,15 @@ def register_handlers(bot):
             bot.answer_callback_query(call.id, "⛔ Unauthorized")
             return
         bot.answer_callback_query(call.id, "🔄 Restarting...")
-        bot.edit_message_text("🔄 Restarting...", call.message.chat.id, call.message.message_id)
+        bot.edit_message_text(
+            "🔄 Restarting...", call.message.chat.id, call.message.message_id
+        )
         logger.info("Control bot restart requested via Telegram.")
+        lock_path = os.path.join(set_path.base_path, "bot.lock")
+        try:
+            os.remove(lock_path)
+        except Exception:
+            pass
         os.execv(sys.executable, [sys.executable] + sys.argv)
 
     # ---- Back to menu ----
