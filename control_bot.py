@@ -133,7 +133,7 @@ def _btn(text, cb_data):
 
 
 def _main_menu():
-    kbd = InlineKeyboardMarkup(row_width=1)
+    kbd = InlineKeyboardMarkup(row_width=2)
     kbd.add(
         _btn("📰 Sources", "src"),
         _btn("🤖 Model", "model"),
@@ -155,14 +155,13 @@ def _is_admin(user_id):
 
 # ---------------------------------<< register handlers >>---------------------------------
 def register_handlers(bot):
-
     @bot.message_handler(commands=["start", "help"])
     def cmd_start(message):
         if not _is_admin(message.from_user.id):
             return
         bot.send_message(
             message.chat.id,
-            "📡 <b>Control Bot</b>\nSelect a section:",
+            "📡 <b>Control Bot</b>\nSelect a section:\n\n🔴 <b>⚠️ IMPORTANT ⚠️</b> 🔴\n🔄 <b>Restart bot</b> after editing settings ❗",
             parse_mode="HTML",
             reply_markup=_main_menu(),
         )
@@ -176,16 +175,26 @@ def register_handlers(bot):
             ("INVESTING_RSS_URL", "Investing"),
             ("FOREXFACTORY_CALENDAR_URL", "ForexFactory"),
         ]
+        source_scores = _get_env_json("SOURCE_SCORE")
         text = "<b>📰 RSS Sources</b>\n\n"
-        kbd = InlineKeyboardMarkup(row_width=1)
+        kbd = InlineKeyboardMarkup(row_width=2)
+        row_btns = []
         for env_key, label in keys:
             val = _get_env_raw(env_key)
+            score = source_scores.get(label, 0)
+            is_on = bool(val) and score != 0
+            status = "✅" if is_on else "❌"
             short = val[:50] + "..." if len(val) > 50 else val
-            text += f"<b>{label}</b>\n<code>{short}</code>\n\n"
-            kbd.add(_btn(f"✏️ {label}", f"src_edit:{env_key}"))
+            text += f"{status} <b>{label}</b>\n<code>{short}</code>\n\n"
+            row_btns.append(_btn(f"✏️ {label}", f"src_edit:{env_key}"))
+        kbd.add(*row_btns[0:2])
+        kbd.add(*row_btns[2:4])
+        kbd.add(*row_btns[4:])
         kbd.add(_btn("◀️ Back", "menu"))
         if msg_id:
-            bot.edit_message_text(text, chat_id, msg_id, parse_mode="HTML", reply_markup=kbd)
+            bot.edit_message_text(
+                text, chat_id, msg_id, parse_mode="HTML", reply_markup=kbd
+            )
         else:
             bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=kbd)
 
@@ -204,7 +213,11 @@ def register_handlers(bot):
             return
         key = call.data.split(":", 1)[1]
         user_state[call.from_user.id] = {"mode": "src_edit", "key": key}
-        bot.send_message(call.message.chat.id, f"Send the new URL for <b>{key}</b>:", parse_mode="HTML")
+        bot.send_message(
+            call.message.chat.id,
+            f"Send the new URL for <b>{key}</b>:",
+            parse_mode="HTML",
+        )
         bot.answer_callback_query(call.id)
 
     # ---- Model ----
@@ -226,7 +239,9 @@ def register_handlers(bot):
             _btn("◀️ Back", "menu"),
         )
         if msg_id:
-            bot.edit_message_text(text, chat_id, msg_id, parse_mode="HTML", reply_markup=kbd)
+            bot.edit_message_text(
+                text, chat_id, msg_id, parse_mode="HTML", reply_markup=kbd
+            )
         else:
             bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=kbd)
 
@@ -266,23 +281,25 @@ def register_handlers(bot):
         end = min(start + ITEMS_PER_PAGE, total)
         page_items = sorted_kw[start:end]
 
-        text = f"<b>🔑 Keywords</b> ({total}) — Page {page+1}/{total_pages}\n\n"
+        text = f"<b>🔑 Keywords</b> ({total}) — Page {page + 1}/{total_pages}\n\n"
         text += "\n".join(f"<b>{w}</b>: {s}" for w, s in page_items)
 
         kbd = InlineKeyboardMarkup(row_width=5)
         if total_pages > 1:
             row = []
             if page > 0:
-                row.append(_btn("◀️", f"kw:pg:{page-1}"))
-            row.append(_btn(f"{page+1}/{total_pages}", "kw:nop"))
+                row.append(_btn("◀️", f"kw:pg:{page - 1}"))
+            row.append(_btn(f"{page + 1}/{total_pages}", "kw:nop"))
             if page < total_pages - 1:
-                row.append(_btn("▶️", f"kw:pg:{page+1}"))
+                row.append(_btn("▶️", f"kw:pg:{page + 1}"))
             kbd.row(*row)
         kbd.row(_btn("➕ Add", "kw:add"), _btn("🗑️ Delete", "kw:del"))
         kbd.row(_btn("◀️ Back", "menu"))
 
         if msg_id:
-            bot.edit_message_text(text, chat_id, msg_id, parse_mode="HTML", reply_markup=kbd)
+            bot.edit_message_text(
+                text, chat_id, msg_id, parse_mode="HTML", reply_markup=kbd
+            )
         else:
             bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=kbd)
 
@@ -315,7 +332,12 @@ def register_handlers(bot):
         kbd = InlineKeyboardMarkup(row_width=5)
         kbd.add(*(_btn(str(i), f"kw:score:{i}") for i in range(1, 6)))
         kbd.add(_btn("◀️ Cancel", "kw:pg:0"))
-        bot.send_message(chat_id, f"Select impact level for <b>{word}</b>:", parse_mode="HTML", reply_markup=kbd)
+        bot.send_message(
+            chat_id,
+            f"Select impact level for <b>{word}</b>:",
+            parse_mode="HTML",
+            reply_markup=kbd,
+        )
 
     @bot.callback_query_handler(func=lambda c: c.data.startswith("kw:score:"))
     def cb_kw_score(call):
@@ -361,7 +383,9 @@ def register_handlers(bot):
             kbd.add(_btn(f"✏️ {name}", f"score_edit:{name}"))
         kbd.add(_btn("◀️ Back", "menu"))
         if msg_id:
-            bot.edit_message_text(text, chat_id, msg_id, parse_mode="HTML", reply_markup=kbd)
+            bot.edit_message_text(
+                text, chat_id, msg_id, parse_mode="HTML", reply_markup=kbd
+            )
         else:
             bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=kbd)
 
@@ -373,36 +397,203 @@ def register_handlers(bot):
         _show_scores(call.message.chat.id, call.message.message_id)
         bot.answer_callback_query(call.id)
 
+    def _show_source_score_picker(chat_id, name):
+        kbd = InlineKeyboardMarkup(row_width=6)
+        kbd.add(
+            _btn("❌ Off", "src_score:0"),
+            *(_btn(str(i), f"src_score:{i}") for i in range(1, 6)),
+        )
+        kbd.add(_btn("◀️ Cancel", "scores"))
+        bot.send_message(
+            chat_id,
+            f"Select score for <b>{name}</b>:",
+            parse_mode="HTML",
+            reply_markup=kbd,
+        )
+
     @bot.callback_query_handler(func=lambda c: c.data.startswith("score_edit:"))
     def cb_score_edit(call):
         if not _is_admin(call.from_user.id):
             bot.answer_callback_query(call.id, "⛔ Unauthorized")
             return
         name = call.data.split(":", 1)[1]
-        user_state[call.from_user.id] = {"mode": "score_edit", "name": name}
-        bot.send_message(call.message.chat.id, f"Send new score for <b>{name}</b>:", parse_mode="HTML")
+        user_state[call.from_user.id] = {"mode": "src_score", "name": name}
+        _show_source_score_picker(call.message.chat.id, name)
+        bot.answer_callback_query(call.id)
+
+    @bot.callback_query_handler(func=lambda c: c.data.startswith("src_score:"))
+    def cb_src_score(call):
+        if not _is_admin(call.from_user.id):
+            bot.answer_callback_query(call.id, "⛔ Unauthorized")
+            return
+        score = int(call.data.split(":")[1])
+        state = user_state.get(call.from_user.id, {})
+        name = state.get("name", "")
+        if not name:
+            bot.answer_callback_query(call.id, "❌ No source selected")
+            return
+        data = _get_env_json("SOURCE_SCORE")
+        data[name] = score
+        _set_env_json("SOURCE_SCORE", data)
+        user_state.pop(call.from_user.id, None)
+        bot.edit_message_text(
+            f"✅ <b>{name}</b> = {score}",
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="HTML",
+            reply_markup=_back_kbd("scores"),
+        )
         bot.answer_callback_query(call.id)
 
     # ---- Env ----
+    def _get_env_line_raw(key: str) -> str:
+        _, s, e = _read_env_section(key)
+        if s == e:
+            return ""
+        with open(ENV_PATH, encoding="utf-8") as f:
+            lines = f.readlines()
+        return "".join(lines[s:e]).strip()
+
+    def _show_env(chat_id, msg_id=None):
+        env_keys = [
+            ("NEWS_UPDATE_INTERVAL_MINUTES", "Update Interval"),
+            ("MIN_IMPACT_SCORE", "Min Impact"),
+            ("FOREX_MIN_SCORE", "Forex Min"),
+            ("MAX_NEWS_PER_DAY", "Max News/Day"),
+            ("FOREX_ALERT_IMPACTS", "Alert Impacts"),
+            ("ENABLE_FOREX_ALERTS", "Enable Forex"),
+            ("RESET_DATABASE", "Reset DB"),
+        ]
+        text = "<b>⚙️ Config</b>\n\n"
+        kbd = InlineKeyboardMarkup(row_width=2)
+        row_buttons = []
+        for key, label in env_keys:
+            raw = _get_env_line_raw(key)
+            if raw:
+                no_comment = re.sub(r"\s+#.*$", "", raw).strip()
+                parts = re.split(r"\s*=\s*", no_comment, maxsplit=1)
+                if len(parts) == 2:
+                    display = f"<b>{parts[0]}</b> = <code>{parts[1]}</code>"
+                else:
+                    display = f"<b>{key}</b>"
+            else:
+                display = f"<b>{key}</b>"
+            text += f"{display}\n"
+            row_buttons.append(_btn(f"✏️ {label}", f"env_edit:{key}"))
+            if len(row_buttons) == 2:
+                kbd.row(*row_buttons)
+                row_buttons = []
+        if row_buttons:
+            kbd.row(*row_buttons)
+        kbd.row(_btn("◀️ Back", "menu"))
+        if msg_id:
+            bot.edit_message_text(
+                text, chat_id, msg_id, parse_mode="HTML", reply_markup=kbd
+            )
+        else:
+            bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=kbd)
+
     @bot.callback_query_handler(func=lambda c: c.data == "env")
     def cb_env(call):
         if not _is_admin(call.from_user.id):
             bot.answer_callback_query(call.id, "⛔ Unauthorized")
             return
-        fields = [
-            ("MIN_IMPACT_SCORE", _get_env_raw("MIN_IMPACT_SCORE")),
-            ("MAX_POSTS_PER_DAY", _get_env_raw("MAX_POSTS_PER_DAY")),
-            ("RESET_DATABASE", _get_env_raw("RESET_DATABASE")),
-            ("NEWS_UPDATE_INTERVAL", _get_env_raw("NEWS_UPDATE_INTERVAL_MINUTES")),
-        ]
-        text = "<b>⚙️ Config</b>\n\n" + "\n".join(
-            f"<b>{k}</b>: <code>{v}</code>" for k, v in fields
+        _show_env(call.message.chat.id, call.message.message_id)
+        bot.answer_callback_query(call.id)
+
+    def _show_bool_picker(chat_id, msg_id, key):
+        raw = _get_env_raw(key)
+        current = raw.strip().lower() == "true"
+        kbd = InlineKeyboardMarkup(row_width=2)
+        kbd.add(
+            _btn(f"{'✅' if current else '❌'} True", f"toggle_bool:{key}:true"),
+            _btn(f"{'✅' if not current else '❌'} False", f"toggle_bool:{key}:false"),
         )
-        bot.edit_message_text(
-            text, call.message.chat.id, call.message.message_id,
-            parse_mode="HTML", reply_markup=_back_kbd("menu"),
+        kbd.add(_btn("Done", "env"))
+        label = key.replace("_", " ").title()
+        if msg_id:
+            bot.edit_message_text(
+                f"<b>{label}</b>\n\nSelect value:",
+                chat_id, msg_id, parse_mode="HTML", reply_markup=kbd,
+            )
+        else:
+            bot.send_message(
+                chat_id,
+                f"<b>{label}</b>\n\nSelect value:",
+                parse_mode="HTML", reply_markup=kbd,
+            )
+
+    def _show_impact_picker(chat_id, msg_id=None):
+        raw = _get_env_raw("FOREX_ALERT_IMPACTS")
+        selected = {x.strip() for x in raw.split(",")} if raw else set()
+        all_impacts = ["High", "Medium", "Low"]
+        kbd = InlineKeyboardMarkup(row_width=1)
+        for impact in all_impacts:
+            status = "✅" if impact in selected else "❌"
+            kbd.add(_btn(f"{status} {impact}", f"toggle_impact:{impact}"))
+        kbd.add(_btn("Done", "env"))
+        if msg_id:
+            bot.edit_message_text(
+                "<b>FOREX_ALERT_IMPACTS</b>\n\nSelect impact levels to alert:",
+                chat_id,
+                msg_id,
+                parse_mode="HTML",
+                reply_markup=kbd,
+            )
+        else:
+            bot.send_message(
+                chat_id,
+                "<b>FOREX_ALERT_IMPACTS</b>\n\nSelect impact levels to alert:",
+                parse_mode="HTML",
+                reply_markup=kbd,
+            )
+
+    @bot.callback_query_handler(func=lambda c: c.data.startswith("env_edit:"))
+    def cb_env_edit(call):
+        if not _is_admin(call.from_user.id):
+            bot.answer_callback_query(call.id, "⛔ Unauthorized")
+            return
+        key = call.data.split(":", 1)[1]
+        if key == "FOREX_ALERT_IMPACTS":
+            _show_impact_picker(call.message.chat.id, call.message.message_id)
+            bot.answer_callback_query(call.id)
+            return
+        if key in ("RESET_DATABASE", "ENABLE_FOREX_ALERTS"):
+            _show_bool_picker(call.message.chat.id, call.message.message_id, key)
+            bot.answer_callback_query(call.id)
+            return
+        user_state[call.from_user.id] = {"mode": "env_edit", "key": key}
+        bot.send_message(
+            call.message.chat.id, f"Send new value for <b>{key}</b>:", parse_mode="HTML"
         )
         bot.answer_callback_query(call.id)
+
+    @bot.callback_query_handler(func=lambda c: c.data.startswith("toggle_impact:"))
+    def cb_toggle_impact(call):
+        if not _is_admin(call.from_user.id):
+            bot.answer_callback_query(call.id, "⛔ Unauthorized")
+            return
+        impact = call.data.split(":", 1)[1]
+        raw = _get_env_raw("FOREX_ALERT_IMPACTS")
+        selected = {x.strip() for x in raw.split(",")} if raw else set()
+        if impact in selected:
+            selected.discard(impact)
+        else:
+            selected.add(impact)
+        new_val = ",".join(sorted(selected, key=["High", "Medium", "Low"].index))
+        _set_env_line("FOREX_ALERT_IMPACTS", f'"{new_val}"')
+        _show_impact_picker(call.message.chat.id, call.message.message_id)
+        bot.answer_callback_query(call.id)
+
+    @bot.callback_query_handler(func=lambda c: c.data.startswith("toggle_bool:"))
+    def cb_toggle_bool(call):
+        if not _is_admin(call.from_user.id):
+            bot.answer_callback_query(call.id, "⛔ Unauthorized")
+            return
+        _, key, val = call.data.split(":", 2)
+        _set_env_line(key, val)
+        _show_bool_picker(call.message.chat.id, call.message.message_id, key)
+        bot.answer_callback_query(call.id, f"✅ Set to {val}")
 
     # ---- Restart ----
     @bot.callback_query_handler(func=lambda c: c.data == "restart")
@@ -447,7 +638,7 @@ def register_handlers(bot):
             bot.answer_callback_query(call.id, "⛔ Unauthorized")
             return
         bot.edit_message_text(
-            "📡 <b>Control Bot</b>\nSelect a section:",
+            "📡 <b>Control Bot</b>\nSelect a section:\n\n🔴 <b>⚠️ IMPORTANT ⚠️</b> 🔴\n🔄 <b>Restart bot</b> after editing settings ❗",
             call.message.chat.id,
             call.message.message_id,
             parse_mode="HTML",
@@ -472,7 +663,9 @@ def register_handlers(bot):
 
         elif mode == "model_edit":
             _set_env_line("OPENROUTER_MODEL", text)
-            bot.reply_to(message, f"✅ Model set to: <code>{text}</code>", parse_mode="HTML")
+            bot.reply_to(
+                message, f"✅ Model set to: <code>{text}</code>", parse_mode="HTML"
+            )
             user_state.pop(uid, None)
             _show_model(message.chat.id)
 
@@ -497,19 +690,15 @@ def register_handlers(bot):
             user_state.pop(uid, None)
             _show_keywords_page(message.chat.id, 0)
 
-        elif mode == "score_edit":
-            try:
-                score = int(text)
-            except ValueError:
-                bot.reply_to(message, "❌ Score must be a number.")
-                return
-            name = state["name"]
-            data = _get_env_json("SOURCE_SCORE")
-            data[name] = score
-            _set_env_json("SOURCE_SCORE", data)
-            bot.reply_to(message, f"✅ <b>{name}</b> = {score}", parse_mode="HTML")
+        elif mode == "env_edit":
+            key = state["key"]
+            _set_env_line(key, text)
+            bot.reply_to(message, f"✅ <b>{key}</b> updated.", parse_mode="HTML")
             user_state.pop(uid, None)
-            _show_scores(message.chat.id)
+            _show_env(message.chat.id)
+
+        elif mode == "src_score":
+            bot.reply_to(message, "Please use the score buttons above.")
 
         elif mode == "kw_score":
             bot.reply_to(message, "Please use the score buttons above.")
