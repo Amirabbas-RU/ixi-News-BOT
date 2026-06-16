@@ -8,6 +8,8 @@ class CNBCRSS(BaseRSSSource):
     rss_url = config.CNBC_RSS_URL
 
     def fetch(self) -> list[dict]:
+        if not self.rss_url:
+            return []
         feed = feedparser.parse(self.rss_url)
         news_items = []
         
