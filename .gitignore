@@ -8,3 +8,5 @@ logs/
 forex_cache.json
 .marscode/
 main.env
+TelegramNewsBot/
+TelegramNewsBot.zip
