@@ -4,7 +4,7 @@ import os
 import json
 
 # ---------------------------------<< load data >>---------------------------------
-load_dotenv(dotenv_path=os.path.join(set_path.base_path, "main.env"))
+load_dotenv(dotenv_path=os.path.join(set_path.base_path, "main.env"), override=True)
 
 NEWS_UPDATE_INTERVAL_MINUTES = int(os.getenv("NEWS_UPDATE_INTERVAL_MINUTES", 60))
 
@@ -35,9 +35,11 @@ TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
 
 MIN_IMPACT_SCORE = int(os.getenv("MIN_IMPACT_SCORE", 7))
 FOREX_MIN_SCORE = int(os.getenv("FOREX_MIN_SCORE", 5))
-MAX_POSTS_PER_DAY = int(os.getenv("MAX_POSTS_PER_DAY", 10))
+MAX_NEWS_PER_DAY = int(os.getenv("MAX_NEWS_PER_DAY", 40))
 
 RESET_DATABASE = os.getenv("RESET_DATABASE", "false").strip().lower() == "true"
+
+ENABLE_FOREX_ALERTS = os.getenv("ENABLE_FOREX_ALERTS", "true").strip().lower() == "true"
 
 BOT_PANEL_BOT_TOKEN = os.getenv("BOT_PANEL_BOT_TOKEN", "")
 ADMIN_TELEGRAM_ID = os.getenv("ADMIN_TELEGRAM_ID", "")
