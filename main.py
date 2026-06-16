@@ -142,9 +142,27 @@ def mark_news_as_summarized(news_id):
         logger.error(f"DB error in mark_news_as_summarized: {e}")
 
 
+def get_today_sent_count() -> int:
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        cursor = db_conn.cursor()
+        cursor.execute(
+            "SELECT COUNT(*) FROM news WHERE published = 1 AND sent_at LIKE ?",
+            (f"{today}%",),
+        )
+        return cursor.fetchone()[0]
+    except Exception as e:
+        logger.error(f"Error counting today's sent news: {e}")
+        return 0
+
+
 def mark_news_as_sent(news_id):
     try:
-        db_conn.execute("UPDATE news SET published = 1 WHERE id = ?", (news_id,))
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        db_conn.execute(
+            "UPDATE news SET published = 1, sent_at = ? WHERE id = ?",
+            (now_str, news_id),
+        )
         db_conn.commit()
     except sqlite3.OperationalError as e:
         db_conn.rollback()
@@ -329,7 +347,7 @@ def send_forex_message(text: str) -> int | None:
     for attempt in range(3):
         try:
             msg = my_bot.send_message(
-                chat_id=TELEGRAM_CHANNEL_ID, text=text, parse_mode=None
+                chat_id=TELEGRAM_CHANNEL_ID, text=text, parse_mode="MarkdownV2"
             )
             logger.info(green("Forex alert sent successfully"))
             return msg.message_id
@@ -503,13 +521,14 @@ def check_forex_calendar():
             title_fa_result = summarize_news_fa(ev["title"], "")
             title_fa = title_fa_result.get("title_fa", "") if title_fa_result else ""
             title_line = f"{title_fa} ({ev['title']})" if title_fa else ev["title"]
-            forecast = f"📊 پیش‌بینی: {ev['forecast']}" if ev.get("forecast") else ""
-            previous = f"📉 قبلی: {ev['previous']}" if ev.get("previous") else ""
+            forecast = f"📊 پیش‌بینی: {escape_markdown_v2(ev['forecast'])}" if ev.get("forecast") else ""
+            previous = f"📉 قبلی: {escape_markdown_v2(ev['previous'])}" if ev.get("previous") else ""
             extra = f"\n{forecast}\n{previous}" if (forecast or previous) else ""
             text = (
                 f"🔔 هشدار {mins} دقیقه قبل از انتشار\n"
-                f"🚦 {ev['country']} {impact_emoji} {impact_label}\n"
-                f"🗓 {title_line}{extra}"
+                f"🚦 {escape_markdown_v2(ev['country'])} {impact_emoji} {impact_label}\n"
+                f"🗓 {escape_markdown_v2(title_line)}{extra}"
+                f"\n\n💠💠 ||@ForexEyvazi|| 💠💠"
             )
             msg_id = send_forex_message(text)
             if msg_id is not None:
@@ -539,7 +558,10 @@ def check_forex_calendar():
 # ---------------------------------<< Main Function >>---------------------------------
 def main():
     try:
-        check_forex_calendar()
+        if config.ENABLE_FOREX_ALERTS:
+            check_forex_calendar()
+        else:
+            logger.info("ForexFactory alerts disabled via config")
 
         SOURCE_CLASSES = {
             "CNBC": CNBCRSS,
@@ -649,8 +671,9 @@ def main():
 
                 safe_title = escape_markdown_v2(title_fa)
                 safe_summary = escape_markdown_v2(summary_fa)
+                diamond = "💠" if batch_label == "ForexFactory" else "💎"
                 message_text = (
-                    f"*{safe_title}*\n\n{safe_summary}\n\n💎💎 ||@ForexEyvazi|| 💎💎"
+                    f"*{safe_title}*\n\n{safe_summary}\n\n{diamond}{diamond} ||@ForexEyvazi|| {diamond}{diamond}"
                 )
 
                 success = False
@@ -705,13 +728,23 @@ def main():
             for n in get_unsent_high_score_news(threshold=MIN_IMPACT_SCORE)
             if n["source"] != "ForexFactory"
         ]
+        if config.MAX_NEWS_PER_DAY > 0:
+            sent_today = get_today_sent_count()
+            remaining = max(0, config.MAX_NEWS_PER_DAY - sent_today)
+            if len(rss_news) > remaining:
+                logger.info(
+                    f"Daily limit ({config.MAX_NEWS_PER_DAY}): {sent_today} sent today, "
+                    f"sending {remaining}/{len(rss_news)} RSS items"
+                )
+                rss_news = rss_news[:remaining]
         _process_news_batch(rss_news, "RSS")
 
         # ---------- Process ForexFactory news (threshold = FOREX_MIN_SCORE) ----------
-        forex_news = get_unsent_high_score_news(
-            threshold=FOREX_MIN_SCORE, source="ForexFactory"
-        )
-        _process_news_batch(forex_news, "ForexFactory")
+        if config.ENABLE_FOREX_ALERTS:
+            forex_news = get_unsent_high_score_news(
+                threshold=FOREX_MIN_SCORE, source="ForexFactory"
+            )
+            _process_news_batch(forex_news, "ForexFactory")
 
     except Exception as e:
         logger.exception(f"Error in main function: {e}")

@@ -94,6 +94,11 @@ def init_db():
     )
     """)
 
+    try:
+        cursor.execute("ALTER TABLE news ADD COLUMN sent_at TEXT")
+    except sqlite3.OperationalError:
+        pass
+
     conn.commit()
     conn.close()
 
