@@ -140,7 +140,6 @@ def _main_menu():
         _btn("🔑 Keywords", "kw:pg:0"),
         _btn("📊 Scores", "scores"),
         _btn("⚙️ Env", "env"),
-        _btn("🔄 Restart", "restart"),
     )
     return kbd
 
@@ -161,7 +160,7 @@ def register_handlers(bot):
             return
         bot.send_message(
             message.chat.id,
-            "📡 <b>Control Bot</b>\nSelect a section:\n\n🔴 <b>⚠️ IMPORTANT ⚠️</b> 🔴\n🔄 <b>Restart bot</b> after editing settings ❗",
+            "📡 <b>Control Bot</b>\nSelect a section:\n\n⚠️ Because you are running the project from <code>main.exe</code>, I cannot restart your server automatically.\n<b>You must close and re-open <code>main.exe</code> to apply changes.</b>\n\n🔴 <b>⚠️ IMPORTANT ⚠️</b> 🔴\n<b>Stop and restart the bot</b> after editing settings ❗",
             parse_mode="HTML",
             reply_markup=_main_menu(),
         )
@@ -595,61 +594,6 @@ def register_handlers(bot):
         _show_bool_picker(call.message.chat.id, call.message.message_id, key)
         bot.answer_callback_query(call.id, f"✅ Set to {val}")
 
-    # ---- Restart ----
-    @bot.callback_query_handler(func=lambda c: c.data == "restart")
-    def cb_confirm_restart(call):
-        if not _is_admin(call.from_user.id):
-            bot.answer_callback_query(call.id, "⛔ Unauthorized")
-            return
-        kbd = InlineKeyboardMarkup().add(
-            _btn("✅ Confirm Restart", "do_restart"),
-            _btn("◀️ Cancel", "menu"),
-        )
-        bot.edit_message_text(
-            "🔄 <b>Restart bot?</b>",
-            call.message.chat.id,
-            call.message.message_id,
-            parse_mode="HTML",
-            reply_markup=kbd,
-        )
-        bot.answer_callback_query(call.id)
-
-    @bot.callback_query_handler(func=lambda c: c.data == "do_restart")
-    def cb_do_restart(call):
-        if not _is_admin(call.from_user.id):
-            bot.answer_callback_query(call.id, "⛔ Unauthorized")
-            return
-        bot.answer_callback_query(call.id, "🔄 Restarting...")
-        bot.edit_message_text(
-            "🔄 Restarting...", call.message.chat.id, call.message.message_id
-        )
-        logger.info("Control bot restart requested via Telegram.")
-        import os, sys, subprocess
-        try:
-            base = set_path.base_path
-            try:
-                os.remove(os.path.join(base, "bot.lock"))
-            except Exception:
-                pass
-            bat_path = os.path.join(base, "_restart.bat")
-            if getattr(sys, "frozen", False) and sys.platform == "win32":
-                with open(bat_path, "w") as f:
-                    f.write(f'@echo off\r\n')
-                    f.write(f'ping -n 4 127.0.0.1 > nul\r\n')
-                    f.write(f'start "" "{sys.executable}"\r\n')
-                    f.write(f'del "%~f0"\r\n')
-                subprocess.Popen(
-                    ["cmd.exe", "/c", bat_path],
-                    creationflags=subprocess.CREATE_NO_WINDOW,
-                )
-            elif getattr(sys, "frozen", False):
-                subprocess.Popen([sys.executable])
-            else:
-                subprocess.Popen([sys.executable] + sys.argv)
-        except Exception as e:
-            logger.exception(f"Restart failed: {e}")
-        os._exit(0)
-
     # ---- Back to menu ----
     @bot.callback_query_handler(func=lambda c: c.data == "menu")
     def cb_menu(call):
@@ -657,7 +601,7 @@ def register_handlers(bot):
             bot.answer_callback_query(call.id, "⛔ Unauthorized")
             return
         bot.edit_message_text(
-            "📡 <b>Control Bot</b>\nSelect a section:\n\n🔴 <b>⚠️ IMPORTANT ⚠️</b> 🔴\n🔄 <b>Restart bot</b> after editing settings ❗",
+            "📡 <b>Control Bot</b>\nSelect a section:\n\n⚠️ Because you are running the project from <code>main.exe</code>, I cannot restart your server automatically.\n<b>You must close and re-open <code>main.exe</code> to apply changes.</b>\n\n🔴 <b>⚠️ IMPORTANT ⚠️</b> 🔴\n<b>Stop and restart the bot</b> after editing settings ❗",
             call.message.chat.id,
             call.message.message_id,
             parse_mode="HTML",
