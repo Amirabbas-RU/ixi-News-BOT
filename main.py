@@ -771,14 +771,29 @@ if config.BOT_PANEL:
 # ---------------------------------<< Main Section >>---------------------------------
 if __name__ == "__main__":
     LOCK_PATH = os.path.join(set_path.base_path, "bot.lock")
-    try:
-        with open(LOCK_PATH, "x") as f:
-            f.write(str(os.getpid()))
-    except FileExistsError:
-        logger.error(
-            "Another bot instance is already running (bot.lock exists). Exiting."
-        )
-        sys.exit(1)
+    while True:
+        try:
+            with open(LOCK_PATH, "x") as f:
+                f.write(str(os.getpid()))
+            break
+        except FileExistsError:
+            try:
+                with open(LOCK_PATH) as f:
+                    old_pid = int(f.read().strip())
+                try:
+                    os.kill(old_pid, 0)
+                except ProcessLookupError:
+                    logger.warning("Stale bot.lock found (%s) — overwriting.", old_pid)
+                    os.remove(LOCK_PATH)
+                    continue
+                else:
+                    logger.error(
+                        "Another bot instance is already running (PID %s). Exiting.", old_pid
+                    )
+                    sys.exit(1)
+            except (ValueError, OSError, FileNotFoundError):
+                logger.error("Invalid bot.lock — exiting.")
+                sys.exit(1)
 
     def _remove_lock():
         try:

@@ -624,30 +624,17 @@ def register_handlers(bot):
             "🔄 Restarting...", call.message.chat.id, call.message.message_id
         )
         logger.info("Control bot restart requested via Telegram.")
-        lock_path = os.path.join(set_path.base_path, "bot.lock")
-        try:
-            os.remove(lock_path)
-        except Exception:
-            pass
         try:
             import subprocess, time
-            exe_path = sys.executable
             if getattr(sys, "frozen", False) and sys.platform == "win32":
-                bat_path = os.path.join(set_path.base_path, "_restart_.bat")
-                with open(bat_path, "w") as f:
-                    f.write(f'@echo off\r\n')
-                    f.write(f'ping 127.0.0.1 -n 3 > nul\r\n')
-                    f.write(f'start "" "{exe_path}"\r\n')
-                    f.write(f'del "%~f0"\r\n')
                 subprocess.Popen(
-                    ["cmd.exe", "/c", bat_path],
+                    [sys.executable],
                     creationflags=subprocess.CREATE_NEW_CONSOLE,
-                    close_fds=True,
                 )
             elif getattr(sys, "frozen", False):
-                subprocess.Popen([exe_path])
+                subprocess.Popen([sys.executable])
             else:
-                subprocess.Popen([exe_path] + sys.argv)
+                subprocess.Popen([sys.executable] + sys.argv)
             time.sleep(1)
         except Exception as e:
             logger.exception(f"Restart failed: {e}")
