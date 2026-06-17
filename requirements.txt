@@ -1,0 +1,7 @@
+python-dotenv
+requests
+feedparser
+openai
+pyTelegramBotAPI
+beautifulsoup4
+pyinstaller
