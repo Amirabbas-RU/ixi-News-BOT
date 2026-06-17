@@ -1,0 +1,32 @@
+# Environment files with secrets
+main.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Database & cache files
+news_storage.db
+forex_cache.json
+
+# Build artifacts
+*.exe
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
