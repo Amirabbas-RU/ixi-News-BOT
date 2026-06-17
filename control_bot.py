@@ -626,15 +626,21 @@ def register_handlers(bot):
         logger.info("Control bot restart requested via Telegram.")
         import os, sys, subprocess
         try:
-            lock_path = os.path.join(set_path.base_path, "bot.lock")
+            base = set_path.base_path
             try:
-                os.remove(lock_path)
+                os.remove(os.path.join(base, "bot.lock"))
             except Exception:
                 pass
+            bat_path = os.path.join(base, "_restart.bat")
             if getattr(sys, "frozen", False) and sys.platform == "win32":
+                with open(bat_path, "w") as f:
+                    f.write(f'@echo off\r\n')
+                    f.write(f'ping -n 4 127.0.0.1 > nul\r\n')
+                    f.write(f'start "" "{sys.executable}"\r\n')
+                    f.write(f'del "%~f0"\r\n')
                 subprocess.Popen(
-                    [sys.executable],
-                    creationflags=subprocess.CREATE_NEW_CONSOLE,
+                    ["cmd.exe", "/c", bat_path],
+                    creationflags=subprocess.CREATE_NO_WINDOW,
                 )
             elif getattr(sys, "frozen", False):
                 subprocess.Popen([sys.executable])
