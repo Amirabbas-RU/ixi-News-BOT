@@ -629,7 +629,14 @@ def register_handlers(bot):
             os.remove(lock_path)
         except Exception:
             pass
-        os.execv(sys.executable, [sys.executable] + sys.argv)
+        import subprocess
+        import time
+        if getattr(sys, "frozen", False):
+            subprocess.Popen(sys.argv)
+        else:
+            subprocess.Popen([sys.executable] + sys.argv)
+        time.sleep(0.5)
+        os._exit(0)
 
     # ---- Back to menu ----
     @bot.callback_query_handler(func=lambda c: c.data == "menu")
