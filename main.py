@@ -676,46 +676,12 @@ def main():
                 result = summarize_news_fa(title, content)
 
                 if not result or not result.get("title_fa"):
-                    if batch_label == "ForexFactory":
-                        logger.warning(
-                            f"{batch_label} ID {news_id} — summarization failed, sending structured fallback"
-                        )
-                        mark_news_as_summarized(news_id)
-                        title_fa = translate_title_fa(title) or title
-                        parts = dict(
-                            p.split(": ", 1)
-                            for p in (content.split(" | ") if content else [])
-                            if ": " in p
-                        )
-                        impact_emoji = {"High": "🔴", "Medium": "🟡", "Low": "🟢"}.get(parts.get("Impact", ""), "⚪")
-                        impact_label = {"High": "بالا", "Medium": "متوسط", "Low": "پایین"}.get(parts.get("Impact", ""), "")
-                        safe_title = escape_markdown_v2(title_fa)
-                        forecast = f"📊 پیش‌بینی: {escape_markdown_v2(parts.get('Forecast', ''))}" if parts.get("Forecast") else ""
-                        previous = f"📉 قبلی: {escape_markdown_v2(parts.get('Previous', ''))}" if parts.get("Previous") else ""
-                        country = escape_markdown_v2(parts.get("Country", ""))
-                        extra = f"\n{forecast}\n{previous}" if (forecast or previous) else ""
-                        message_text = (
-                            f"📌 {safe_title}\n\n"
-                            f"🌍 کشور: {country} {impact_emoji} {impact_label}{extra}"
-                            f"\n\n💠💠 ||@ForexEyvazi|| 💠💠"
-                        )
-                        success = send_with_retry(
-                            bot=my_bot,
-                            chat_id=TELEGRAM_CHANNEL_ID,
-                            content=message_text,
-                            max_retries=3,
-                        )
-                        if success:
-                            mark_news_as_sent(news_id)
-                            sent += 1
-                        continue
-                    else:
-                        logger.warning(
-                            f"{batch_label} ID {news_id} — summarization failed, marking as published"
-                        )
-                        mark_news_as_summarized(news_id)
-                        mark_news_as_sent(news_id)
-                        continue
+                    logger.warning(
+                        f"{batch_label} ID {news_id} — summarization failed, marking as published"
+                    )
+                    mark_news_as_summarized(news_id)
+                    mark_news_as_sent(news_id)
+                    continue
 
                 title_fa = result.get("title_fa")
                 summary_fa = result.get("summary_fa")
