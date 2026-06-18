@@ -473,6 +473,8 @@ def register_handlers(bot):
             ("MAX_NEWS_PER_DAY", "Max News/Day"),
             ("FOREX_ALERT_IMPACTS", "Alert Impacts"),
             ("ENABLE_FOREX_ALERTS", "Enable Forex"),
+            ("TIME_PROTECTION", "Time Protection"),
+            ("NEWS_AGE_LIMIT_HOURS", "Age Limit Hours"),
             ("RESET_DATABASE", "Reset DB"),
         ]
         text = "<b>⚙️ Config</b>\n\n"
@@ -569,7 +571,7 @@ def register_handlers(bot):
             _show_impact_picker(call.message.chat.id, call.message.message_id)
             bot.answer_callback_query(call.id)
             return
-        if key in ("RESET_DATABASE", "ENABLE_FOREX_ALERTS"):
+        if key in ("RESET_DATABASE", "ENABLE_FOREX_ALERTS", "TIME_PROTECTION"):
             _show_bool_picker(call.message.chat.id, call.message.message_id, key)
             bot.answer_callback_query(call.id)
             return
