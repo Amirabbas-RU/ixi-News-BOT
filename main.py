@@ -48,7 +48,7 @@ FOREXFACTORY_CALENDAR_URL = config.FOREXFACTORY_CALENDAR_URL
 CALENDAR_TZ = ZoneInfo(config.CALENDAR_TIMEZONE)
 FOREX_ALERT_IMPACTS = [x.strip() for x in config.FOREX_ALERT_IMPACTS.split(",")]
 FOREX_IMPACT_EMOJIS = {"High": "🔴", "Medium": "🟡", "Low": "🟢"}
-FOREX_IMPACT_LABELS = {"High": "بالا", "Medium": "متوسط", "Low": "پایین"}
+FOREX_IMPACT_LABELS = {"High": "تاثیر خبر بالا", "Medium": "تاثیر خبر متوسط", "Low": "تاثیر خبر پایین"}
 
 TIME_PROTECTION = config.TIME_PROTECTION
 NEWS_AGE_LIMIT_HOURS = config.NEWS_AGE_LIMIT_HOURS
