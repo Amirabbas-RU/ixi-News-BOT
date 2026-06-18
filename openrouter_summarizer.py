@@ -10,24 +10,34 @@ client = OpenAI(
 )
 
 
+title_cache: dict[str, str] = {}
+
 def translate_title_fa(title: str) -> str | None:
+    if title in title_cache:
+        return title_cache[title]
     prompt = f"عنوان خبر زیر را به فارسی روان، دقیق و خبری ترجمه کن:\n\n{title}"
-    try:
-        response = client.chat.completions.create(
-            model=config.OPENROUTER_MODEL,
-            messages=[
-                {"role": "system", "content": "یک مترجم حرفه‌ای خبرهای اقتصادی هستی. عنوان را دقیق و روان به فارسی ترجمه کن."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.1,
-            max_tokens=100
-        )
-        text = response.choices[0].message.content
-        if text and text.strip():
-            return text.strip()
-    except Exception as e:
-        logger.error(f"Title translation error: {e}")
-    return None
+    for attempt in range(2):
+        try:
+            response = client.chat.completions.create(
+                model=config.OPENROUTER_MODEL,
+                messages=[
+                    {"role": "system", "content": "یک مترجم حرفه‌ای خبرهای اقتصادی هستی. عنوان را دقیق و روان به فارسی ترجمه کن."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,
+                max_tokens=100
+            )
+            text = response.choices[0].message.content
+            if text and text.strip():
+                title_cache[title] = text.strip()
+                return text.strip()
+        except Exception as e:
+            logger.error(f"Title translation error (attempt {attempt + 1}): {e}")
+            if attempt == 0:
+                import time
+                time.sleep(2)
+    title_cache[title] = title
+    return title
 
 
 def summarize_news_fa(title: str, content: str) -> dict:
