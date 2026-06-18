@@ -41,6 +41,7 @@ class CNBCRSS(BaseRSSSource):
                 "image_url": image_url,
                 "source": self.name,
                 "published_at": entry.get("published"),
+                "published_parsed": entry.get("published_parsed"),
                 "content": entry.get("summary", "")
             })
 
