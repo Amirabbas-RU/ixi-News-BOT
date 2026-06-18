@@ -41,6 +41,9 @@ RESET_DATABASE = os.getenv("RESET_DATABASE", "false").strip().lower() == "true"
 
 ENABLE_FOREX_ALERTS = os.getenv("ENABLE_FOREX_ALERTS", "true").strip().lower() == "true"
 
+TIME_PROTECTION = os.getenv("TIME_PROTECTION", "true").strip().lower() == "true"
+NEWS_AGE_LIMIT_HOURS = int(os.getenv("NEWS_AGE_LIMIT_HOURS", 24))
+
 BOT_PANEL_BOT_TOKEN = os.getenv("BOT_PANEL_BOT_TOKEN", "")
 ADMIN_TELEGRAM_ID = os.getenv("ADMIN_TELEGRAM_ID", "")
 BOT_PANEL = os.getenv("BOT_PANEL", "false").strip().lower() == "true"
@@ -60,6 +63,7 @@ def reload_env():
     global TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID
     global MIN_IMPACT_SCORE, FOREX_MIN_SCORE, MAX_NEWS_PER_DAY
     global RESET_DATABASE, ENABLE_FOREX_ALERTS
+    global TIME_PROTECTION, NEWS_AGE_LIMIT_HOURS
     global BOT_PANEL_BOT_TOKEN, ADMIN_TELEGRAM_ID, BOT_PANEL
     global HIGH_IMPACT_KEYWORDS, SOURCE_SCORE, ACTIVE_SOURCES
 
@@ -89,6 +93,8 @@ def reload_env():
     MAX_NEWS_PER_DAY = int(os.getenv("MAX_NEWS_PER_DAY", 40))
     RESET_DATABASE = os.getenv("RESET_DATABASE", "false").strip().lower() == "true"
     ENABLE_FOREX_ALERTS = os.getenv("ENABLE_FOREX_ALERTS", "true").strip().lower() == "true"
+    TIME_PROTECTION = os.getenv("TIME_PROTECTION", "true").strip().lower() == "true"
+    NEWS_AGE_LIMIT_HOURS = int(os.getenv("NEWS_AGE_LIMIT_HOURS", 24))
     BOT_PANEL_BOT_TOKEN = os.getenv("BOT_PANEL_BOT_TOKEN", "")
     ADMIN_TELEGRAM_ID = os.getenv("ADMIN_TELEGRAM_ID", "")
     BOT_PANEL = os.getenv("BOT_PANEL", "false").strip().lower() == "true"
