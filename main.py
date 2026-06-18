@@ -16,7 +16,7 @@ from sources_yahoo import YahooRSS
 
 from openrouter_summarizer import summarize_news_fa, summarize_forex_event_fa, translate_title_fa
 from sources_forexfactory import ForexFactoryCalendar
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 # ---------------------------------<< in order to avoid freeze .exe file >>---------------------------------
@@ -50,6 +50,9 @@ FOREX_ALERT_IMPACTS = [x.strip() for x in config.FOREX_ALERT_IMPACTS.split(",")]
 FOREX_IMPACT_EMOJIS = {"High": "🔴", "Medium": "🟡", "Low": "🟢"}
 FOREX_IMPACT_LABELS = {"High": "بالا", "Medium": "متوسط", "Low": "پایین"}
 
+TIME_PROTECTION = config.TIME_PROTECTION
+NEWS_AGE_LIMIT_HOURS = config.NEWS_AGE_LIMIT_HOURS
+MAX_NEWS_AGE_HOURS = 48
 _last_shown_date = None
 db_conn = None
 
@@ -62,6 +65,7 @@ def reload_config():
     global MIN_IMPACT_SCORE, FOREX_MIN_SCORE
     global HIGH_IMPACT_KEYWORDS, SOURCE_SCORE
     global FOREXFACTORY_CALENDAR_URL, CALENDAR_TZ, FOREX_ALERT_IMPACTS
+    global TIME_PROTECTION, NEWS_AGE_LIMIT_HOURS
 
     NEWS_UPDATE_INTERVAL_MINUTES = config.NEWS_UPDATE_INTERVAL_MINUTES
     DB_NAME = config.DB_NAME
@@ -78,6 +82,8 @@ def reload_config():
     FOREXFACTORY_CALENDAR_URL = config.FOREXFACTORY_CALENDAR_URL
     CALENDAR_TZ = ZoneInfo(config.CALENDAR_TIMEZONE)
     FOREX_ALERT_IMPACTS = [x.strip() for x in config.FOREX_ALERT_IMPACTS.split(",")]
+    TIME_PROTECTION = config.TIME_PROTECTION
+    NEWS_AGE_LIMIT_HOURS = config.NEWS_AGE_LIMIT_HOURS
 
 
 # ---------------------------------<< setup telegram bot >>---------------------------------
@@ -124,7 +130,7 @@ def update_news_summary(news_id: int, summary: str):
         logger.error(f"Database error in update_news_summary: {e}")
 
 
-def get_unsent_high_score_news(threshold: float = 7.0, source: str = None):
+def get_unsent_high_score_news(threshold: float = 7.0, source: str = None, max_age_hours: int = None):
     try:
         cursor = db_conn.cursor()
         query = """
@@ -134,6 +140,10 @@ def get_unsent_high_score_news(threshold: float = 7.0, source: str = None):
                 AND published = 0
         """
         params = [threshold]
+        if TIME_PROTECTION:
+            limit = max_age_hours if max_age_hours is not None else NEWS_AGE_LIMIT_HOURS
+            query += " AND created_at >= datetime('now', '-' || ? || ' hours')"
+            params.append(limit)
         if source:
             query += " AND source = ?"
             params.append(source)
@@ -607,6 +617,15 @@ def main():
             news_items = source.fetch()
 
             for news in news_items:
+                pub_parsed = news.get("published_parsed")
+                if pub_parsed:
+                    pub_dt = datetime(*pub_parsed[:6], tzinfo=timezone.utc)
+                    age_hours = (datetime.now(timezone.utc) - pub_dt).total_seconds() / 3600
+                    if age_hours > MAX_NEWS_AGE_HOURS:
+                        logger.info(
+                            f"Skipping old news ({age_hours:.0f}h): {news['title']}"
+                        )
+                        continue
                 inserted = insert_news(news)
                 if inserted:
                     total_new += 1
