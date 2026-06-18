@@ -556,13 +556,15 @@ def check_forex_calendar():
             mins = round(minutes_until)
             logger.info(green(f"    → Sending pre-alert ({mins} min before release)"))
             title_fa = translate_title_fa(ev["title"]) or ""
-            title_line = f"📌 {title_fa} - {ev['title']}" if title_fa else f"📌 {ev['title']}"
+            title_line = f"📌 {title_fa} ({ev['title']})" if title_fa else f"📌 {ev['title']}"
             forecast = f"📊 پیش‌بینی: {escape_markdown_v2(ev['forecast'])}" if ev.get("forecast") else ""
             previous = f"📉 قبلی: {escape_markdown_v2(ev['previous'])}" if ev.get("previous") else ""
             extra = f"\n{forecast}\n{previous}" if (forecast or previous) else ""
             text = (
-                f"🔔 هشدار {mins} دقیقه قبل از انتشار\n"
+                f"🔔 هشدار {mins} دقیقه قبل از انتشار خبر\n"
+                f"\n"
                 f"🚦 {escape_markdown_v2(ev['country'])} {impact_emoji} {impact_label}\n"
+                f"\n"
                 f"🗓 {escape_markdown_v2(title_line)}{extra}"
                 f"\n\n💠💠 ||@ForexEyvazi|| 💠💠"
             )
