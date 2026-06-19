@@ -6,7 +6,8 @@ import config
 # ایجاد کلاینت OpenRouter
 client = OpenAI(
     api_key=config.OPENROUTER_API_KEY,
-    base_url=config.OPENROUTER_BASE_URL
+    base_url=config.OPENROUTER_BASE_URL,
+    timeout=30
 )
 
 
