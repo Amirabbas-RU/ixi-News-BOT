@@ -15,13 +15,13 @@ title_cache: dict[str, str] = {}
 def translate_title_fa(title: str) -> str | None:
     if title in title_cache:
         return title_cache[title]
-    prompt = f"عنوان خبر زیر را به فارسی روان، دقیق و خبری ترجمه کن:\n\n{title}"
+    prompt = f"فقط عنوان را به فارسی روان ترجمه کن و هیچ چیز دیگر:\n\n{title}"
     for attempt in range(2):
         try:
             response = client.chat.completions.create(
                 model=config.OPENROUTER_MODEL,
                 messages=[
-                    {"role": "system", "content": "یک مترجم حرفه‌ای خبرهای اقتصادی هستی. عنوان را دقیق و روان به فارسی ترجمه کن."},
+                    {"role": "system", "content": "فقط عنوان را به فارسی ترجمه کن و هیچ چیز دیگر ننویس."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.1,
@@ -29,8 +29,12 @@ def translate_title_fa(title: str) -> str | None:
             )
             text = response.choices[0].message.content
             if text and text.strip():
-                title_cache[title] = text.strip()
-                return text.strip()
+                clean = text.strip()
+                for prefix in ["عنوان خبر به فارسی روان و دقیق:", "عنوان خبر:", "عنوان به فارسی:"]:
+                    if clean.startswith(prefix):
+                        clean = clean[len(prefix):].strip()
+                title_cache[title] = clean
+                return clean
         except Exception as e:
             logger.error(f"Title translation error (attempt {attempt + 1}): {e}")
             if attempt == 0:
