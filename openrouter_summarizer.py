@@ -36,8 +36,7 @@ def translate_title_fa(title: str) -> str | None:
             if attempt == 0:
                 import time
                 time.sleep(2)
-    title_cache[title] = title
-    return title
+    return None
 
 
 def summarize_news_fa(title: str, content: str) -> dict:
