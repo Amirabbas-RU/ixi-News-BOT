@@ -645,7 +645,10 @@ def main():
             )
             rows = cursor.fetchall()
 
-            for row in rows:
+            total_rows = len(rows)
+            for idx, row in enumerate(rows):
+                if idx % 100 == 0 and idx > 0:
+                    logger.info(f"Scoring progress: {idx}/{total_rows}")
                 news_id, title, content, source = row
                 news_item = {"title": title, "content": content, "source": source}
                 score = calculate_total_score(news_item)
@@ -870,6 +873,8 @@ if __name__ == "__main__":
     atexit.register(_remove_lock)
 
     db_conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    db_conn.execute("PRAGMA journal_mode=WAL")
+    db_conn.execute("PRAGMA busy_timeout=5000")
 
     logger.info(f"Bot started! Running every {NEWS_UPDATE_INTERVAL_MINUTES} minutes...")
 
