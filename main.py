@@ -675,6 +675,14 @@ def main():
                 content = news.get("content")
                 image_url = news.get("image_url")
 
+                if not content or len(content.strip()) < 30:
+                    logger.warning(
+                        f"{batch_label} ID {news_id} — content too short ({len(content or '')} chars), skipping"
+                    )
+                    mark_news_as_summarized(news_id)
+                    mark_news_as_sent(news_id)
+                    continue
+
                 result = summarize_news_fa(title, content)
 
                 if not result or not result.get("title_fa"):
