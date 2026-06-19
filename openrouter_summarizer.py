@@ -90,7 +90,7 @@ def summarize_news_fa(title: str, content: str) -> dict:
                 {"role": "user", "content": prompt}
             ],
             temperature=0.2,
-            max_tokens=350
+            max_tokens=800
         )
 
         text = response.choices[0].message.content
