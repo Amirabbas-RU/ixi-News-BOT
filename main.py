@@ -53,6 +53,8 @@ FOREX_IMPACT_LABELS = {"High": "تاثیر خبر بالا", "Medium": "تاثی
 TIME_PROTECTION = config.TIME_PROTECTION
 NEWS_AGE_LIMIT_HOURS = config.NEWS_AGE_LIMIT_HOURS
 MAX_NEWS_AGE_HOURS = 48
+FOREX_IMAGE_SEND = config.FOREX_IMAGE_SEND
+FOREX_IMAGE_SEND_TIME = config.FOREX_IMAGE_SEND_TIME
 _last_shown_date = None
 db_conn = None
 
@@ -66,6 +68,7 @@ def reload_config():
     global HIGH_IMPACT_KEYWORDS, SOURCE_SCORE
     global FOREXFACTORY_CALENDAR_URL, CALENDAR_TZ, FOREX_ALERT_IMPACTS
     global TIME_PROTECTION, NEWS_AGE_LIMIT_HOURS
+    global FOREX_IMAGE_SEND, FOREX_IMAGE_SEND_TIME
 
     NEWS_UPDATE_INTERVAL_MINUTES = config.NEWS_UPDATE_INTERVAL_MINUTES
     DB_NAME = config.DB_NAME
@@ -84,6 +87,8 @@ def reload_config():
     FOREX_ALERT_IMPACTS = [x.strip() for x in config.FOREX_ALERT_IMPACTS.split(",")]
     TIME_PROTECTION = config.TIME_PROTECTION
     NEWS_AGE_LIMIT_HOURS = config.NEWS_AGE_LIMIT_HOURS
+    FOREX_IMAGE_SEND = config.FOREX_IMAGE_SEND
+    FOREX_IMAGE_SEND_TIME = config.FOREX_IMAGE_SEND_TIME
 
 
 # ---------------------------------<< setup telegram bot >>---------------------------------
@@ -556,6 +561,16 @@ def check_forex_calendar():
             mins = round(minutes_until)
             logger.info(green(f"    → Sending pre-alert ({mins} min before release)"))
             title_fa = translate_title_fa(ev["title"]) or ""
+            # save translation for daily snapshot image
+            if title_fa and not ev.get("title_fa"):
+                try:
+                    db_conn.execute(
+                        "UPDATE forex_events SET title_fa = ? WHERE id = ?",
+                        (title_fa, ev["id"]),
+                    )
+                    db_conn.commit()
+                except Exception:
+                    db_conn.rollback()
             title_line = f"📌 {title_fa} ({ev['title']})" if title_fa else f"📌 {ev['title']}"
             forecast = f"📊 پیش‌بینی: {escape_markdown_v2(ev['forecast'])}" if ev.get("forecast") else ""
             previous = f"📉 قبلی: {escape_markdown_v2(ev['previous'])}" if ev.get("previous") else ""
@@ -585,7 +600,7 @@ def check_forex_calendar():
         elif 0 <= minutes_until <= alert_window and ev["alert_pre_sent"]:
             logger.info(f"    → Pre-alert already sent, skipping")
 
-        if minutes_until < -1 and not ev["news_inserted"]:
+        if minutes_until <= 0 and not ev["news_inserted"]:
             logger.info(f"    → Event released, inserting into news table")
             mark_forex_alert("news", ev["id"])
             insert_forex_into_news(ev)
@@ -593,13 +608,106 @@ def check_forex_calendar():
     logger.info(green("ForexFactory alert check complete"))
 
 
+# ---------------------------------<< Daily Snapshot Image >>---------------------------------
+def _snapshot_already_sent_today() -> bool:
+    """Check if a daily snapshot has already been sent today (UTC date)."""
+    try:
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        cursor = db_conn.cursor()
+        cursor.execute(
+            "SELECT 1 FROM daily_snapshots WHERE snapshot_date = ?", (today_str,)
+        )
+        return cursor.fetchone() is not None
+    except Exception as e:
+        logger.error(f"Snapshot sent-today check error: {e}")
+        return False
+
+
+def _record_snapshot_sent(image_path: str):
+    """Record that a daily snapshot was sent today."""
+    try:
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        db_conn.execute(
+            "INSERT OR IGNORE INTO daily_snapshots (snapshot_date, image_path, sent_at) "
+            "VALUES (?, ?, ?)",
+            (today_str, image_path, now_str),
+        )
+        db_conn.commit()
+        logger.info(green(f"Daily snapshot recorded for {today_str}"))
+    except Exception as e:
+        db_conn.rollback()
+        logger.error(f"Record snapshot error: {e}")
+
+
+def check_and_send_daily_snapshot():
+    """Generate and send the daily forex events snapshot image if enabled and due."""
+    if not FOREX_IMAGE_SEND:
+        return
+
+    # parse target time (UTC)
+    try:
+        target_h, target_m = map(int, FOREX_IMAGE_SEND_TIME.strip().split(":"))
+    except (ValueError, AttributeError):
+        logger.error(f"Invalid FOREX_IMAGE_SEND_TIME format: {FOREX_IMAGE_SEND_TIME}")
+        return
+
+    now_utc = datetime.now(timezone.utc)
+    now_tehran = now_utc.astimezone(ZoneInfo("Asia/Tehran"))
+    target_minutes = target_h * 60 + target_m
+    current_minutes = now_tehran.hour * 60 + now_tehran.minute
+
+    logger.info(
+        f"Snapshot check: enabled={FOREX_IMAGE_SEND}, "
+        f"target={FOREX_IMAGE_SEND_TIME} Tehran ({target_minutes}m), "
+        f"now={now_tehran.strftime('%H:%M')} Tehran ({current_minutes}m)"
+    )
+
+    # only send if we've passed the target time today
+    if current_minutes < target_minutes:
+        logger.info(f"Snapshot: not yet {FOREX_IMAGE_SEND_TIME} UTC, waiting")
+        return
+
+    # check if already sent today
+    if _snapshot_already_sent_today():
+        logger.info("Snapshot: already sent today, skipping")
+        return
+
+    logger.info("Generating daily forex events snapshot image...")
+    from forex_image_generator import generate_forex_image
+
+    image_path = generate_forex_image()
+    if image_path is None:
+        logger.warning("No snapshot image generated (no events or error)")
+        return
+
+    # send to channel
+    try:
+        with open(image_path, "rb") as img_file:
+            my_bot.send_photo(
+                chat_id=TELEGRAM_CHANNEL_ID,
+                photo=img_file,
+                caption=f"📊 #خلاصه_رویدادهای_امروز — {now_utc.strftime('%Y-%m-%d')}",
+            )
+        logger.info(green("Daily snapshot sent to Telegram channel"))
+        _record_snapshot_sent(image_path)
+    except Exception as e:
+        logger.error(f"Failed to send daily snapshot: {e}")
+
+
 # ---------------------------------<< Main Function >>---------------------------------
 def main():
     try:
+        # reload config every cycle so changes to main.env take effect without restart
+        reload_config()
+
         if config.ENABLE_FOREX_ALERTS:
             check_forex_calendar()
         else:
             logger.info("ForexFactory alerts disabled via config")
+
+        # Send daily snapshot image if enabled and due
+        check_and_send_daily_snapshot()
 
         SOURCE_CLASSES = {
             "CNBC": CNBCRSS,
@@ -686,18 +794,48 @@ def main():
                     mark_news_as_sent(news_id)
                     continue
 
-                result = summarize_news_fa(title, content)
+                # ── ForexFactory: use forex-specific summarizer ──
+                if batch_label == "ForexFactory":
+                    forex_ev = None
+                    news_url = news.get("url")
+                    if news_url:
+                        try:
+                            cursor = db_conn.cursor()
+                            cursor.execute(
+                                "SELECT * FROM forex_events WHERE url = ?", (news_url,)
+                            )
+                            row = cursor.fetchone()
+                            if row:
+                                cols = [d[0] for d in cursor.description]
+                                forex_ev = dict(zip(cols, row))
+                        except Exception:
+                            pass
 
-                if not result or not result.get("title_fa"):
-                    logger.warning(
-                        f"{batch_label} ID {news_id} — summarization failed, marking as published"
-                    )
-                    mark_news_as_summarized(news_id)
-                    mark_news_as_sent(news_id)
-                    continue
+                    if forex_ev:
+                        summary_fa = summarize_forex_event_fa(forex_ev)
+                        title_fa = forex_ev.get("title_fa") or translate_title_fa(title) or title
+                    else:
+                        # fallback: use generic summarizer
+                        result = summarize_news_fa(title, content)
+                        if not result or not result.get("title_fa"):
+                            mark_news_as_summarized(news_id)
+                            mark_news_as_sent(news_id)
+                            continue
+                        title_fa = result.get("title_fa")
+                        summary_fa = result.get("summary_fa")
+                else:
+                    result = summarize_news_fa(title, content)
 
-                title_fa = result.get("title_fa")
-                summary_fa = result.get("summary_fa")
+                    if not result or not result.get("title_fa"):
+                        logger.warning(
+                            f"{batch_label} ID {news_id} — summarization failed, marking as published"
+                        )
+                        mark_news_as_summarized(news_id)
+                        mark_news_as_sent(news_id)
+                        continue
+
+                    title_fa = result.get("title_fa")
+                    summary_fa = result.get("summary_fa")
 
                 try:
                     update_news_summary(news_id, summary_fa)

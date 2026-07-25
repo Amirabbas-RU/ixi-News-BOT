@@ -1,0 +1,398 @@
+"""
+ForexFactory Events Image Generator — Persian Edition
+Generates a dark-themed Persian table image from pending forex events.
+Usage:
+    python forex_image_generator.py          # standalone — reads DB, saves PNG
+    from forex_image_generator import generate_forex_image  # importable for main.py
+"""
+
+import os
+import sqlite3
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from PIL import Image, ImageDraw, ImageFont
+
+# ── ensure proxy is set before OpenAI client initializes ──────────
+for _key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+    if _key not in os.environ:
+        os.environ[_key] = "http://127.0.0.1:10808"
+
+import set_path  # noqa: F401 — ensure CWD is project root
+from config import DB_PATH, CALENDAR_TIMEZONE
+
+# lazy import — only used as fallback when title_fa is NULL
+_translate_fn = None
+
+
+def _get_translate_fn():
+    global _translate_fn
+    if _translate_fn is None:
+        from openrouter_summarizer import translate_title_fa
+        _translate_fn = translate_title_fa
+    return _translate_fn
+
+# ── output path ──────────────────────────────────────────────────
+OUTPUT_PATH = os.path.join(set_path.base_path, "forex_events_snapshot.png")
+
+# ── fonts ────────────────────────────────────────────────────────
+VAZIR_BOLD_PATH = "/usr/share/fonts/vazirmatn/Vazirmatn-RD-FD-Bold.ttf"
+VAZIR_REGULAR_PATH = "/usr/share/fonts/vazirmatn/Vazirmatn-FD-Light.ttf"
+MONO_PATH = "/usr/share/fonts/TTF/CaskaydiaMonoNerdFont-Regular.ttf"
+
+# ── colour palette ───────────────────────────────────────────────
+BG_COLOR       = (18, 18, 22, 255)
+HEADER_BG      = (30, 30, 40, 255)
+ROW_ODD        = (24, 24, 32, 255)
+ROW_EVEN       = (20, 20, 28, 255)
+BORDER_COLOR   = (60, 60, 75, 255)
+TEXT_PRIMARY   = (220, 220, 230, 255)
+TEXT_SECONDARY = (150, 150, 165, 255)
+ACCENT_VIOLET  = (124, 58, 237, 255)       # #7C3AED
+IMPACT_HIGH    = (255, 80, 80, 255)        # قرمز
+IMPACT_MEDIUM  = (240, 180, 50, 255)       # کهربایی
+IMPACT_LOW     = (80, 200, 80, 255)        # سبز
+SENT_COLOR     = (100, 200, 100, 255)
+
+# ── Persian labels ───────────────────────────────────────────────
+IMPACT_LABELS_FA = {"High": "بالا", "Medium": "متوسط", "Low": "پایین"}
+IMPACT_EMOJIS_FA = {"High": "🔴", "Medium": "🟡", "Low": "🟢"}
+TEHRAN_TZ = ZoneInfo("Asia/Tehran")
+
+# ── layout ───────────────────────────────────────────────────────
+PADDING_X = 32
+PADDING_Y = 28
+ROW_HEIGHT = 56
+HEADER_HEIGHT = 60
+TITLE_HEIGHT = 72
+FOOTER_HEIGHT = 52
+
+COL_WIDTHS = {
+    "status":   72,
+    "impact":   100,
+    "country":  105,
+    "title":    540,
+    "date":     145,
+    "time":     100,
+}
+
+COL_LABELS = {
+    "status":   "وضعیت",
+    "impact":   "تاثیر",
+    "country":  "کشور",
+    "title":    "عنوان رویداد",
+    "date":     "تاریخ",
+    "time":     "ساعت",
+}
+
+COL_ORDER = ["status", "impact", "country", "title", "date", "time"]  # RTL: rightmost=status
+
+# ── Persian digits mapping ───────────────────────────────────────
+_EN_DIGITS = "0123456789"
+_FA_DIGITS = "۰۱۲۳۴۵۶۷۸۹"
+_TRANS_DIGITS = str.maketrans(_EN_DIGITS, _FA_DIGITS)
+
+
+def _fa_num(n) -> str:
+    """Convert a number to Persian digit string."""
+    return str(n).translate(_TRANS_DIGITS)
+
+
+def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
+    path = VAZIR_BOLD_PATH if bold else VAZIR_REGULAR_PATH
+    try:
+        return ImageFont.truetype(path, size)
+    except OSError:
+        return ImageFont.truetype(MONO_PATH, size)
+
+
+def _load_mono(size: int) -> ImageFont.FreeTypeFont:
+    try:
+        return ImageFont.truetype(MONO_PATH, size)
+    except OSError:
+        return ImageFont.load_default()
+
+
+def _get_events(db_path: str, cal_tz: str) -> list[dict] | None:
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        today_str = datetime.now(ZoneInfo(cal_tz)).strftime("%m-%d-%Y")
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, title, title_fa, country, event_date, event_time, impact,
+                   forecast, previous, url, analysis,
+                   alert_pre_sent, alert_15min_sent, alert_30min_sent,
+                   result_sent, news_inserted
+            FROM forex_events
+            WHERE news_inserted = 0 OR event_date = ?
+            ORDER BY event_date, event_time
+            """,
+            (today_str,),
+        )
+        events = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return events
+    except Exception as e:
+        print(f"[ERROR] Failed to read DB: {e}")
+        return None
+
+
+def _parse_dt(date_str: str, time_str: str, tz: ZoneInfo) -> datetime | None:
+    try:
+        naive = datetime.strptime(f"{date_str} {time_str}", "%m-%d-%Y %I:%M%p")
+        return naive.replace(tzinfo=tz)
+    except Exception:
+        return None
+
+
+def _format_time_24h(time_str: str) -> str:
+    """Convert '10:00am' → '۱۰:۰۰' (24h, Persian digits)."""
+    try:
+        dt = datetime.strptime(time_str, "%I:%M%p")
+        return dt.strftime("%H:%M").translate(_TRANS_DIGITS)
+    except Exception:
+        return time_str
+
+
+def _format_date_fa(date_str: str) -> str:
+    """Convert '07-23-2026' → '۲۰۲۶/۰۷/۲۳' (YYYY/MM/DD, Persian digits)."""
+    try:
+        parts = date_str.split("-")
+        if len(parts) == 3:
+            m, d, y = parts
+            return f"{_fa_num(y)}/{_fa_num(m)}/{_fa_num(d)}"
+    except Exception:
+        pass
+    return date_str
+
+
+def _format_mins_fa(mins: float) -> str:
+    """Format remaining minutes in Persian."""
+    if abs(mins) < 10000:
+        m = int(round(mins))
+        if m > 0:
+            return f"{_fa_num(m)}+ دقیقه"
+        elif m < 0:
+            return f"{_fa_num(abs(m))}- دقیقه"
+        else:
+            return "همین حالا"
+    else:
+        h = int(round(mins / 60))
+        if h > 0:
+            return f"{_fa_num(h)}+ ساعت"
+        else:
+            return f"{_fa_num(abs(h))}- ساعت"
+
+
+def _impact_color(impact: str) -> tuple[int, int, int]:
+    return {
+        "High": IMPACT_HIGH,
+        "Medium": IMPACT_MEDIUM,
+        "Low": IMPACT_LOW,
+    }.get(impact, TEXT_SECONDARY)
+
+
+def _truncate(text: str, font: ImageFont.FreeTypeFont, max_width: int) -> str:
+    if not text:
+        return ""
+    bbox = font.getbbox(text)
+    if bbox[2] - bbox[0] <= max_width:
+        return text
+    lo, hi = 0, len(text)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if font.getbbox(text[:mid] + "…")[2] <= max_width:
+            lo = mid
+        else:
+            hi = mid - 1
+    return text[:lo] + "…" if lo > 0 else "…"
+
+
+def generate_forex_image(
+    db_path: str = None,
+    output_path: str = None,
+    cal_tz: str = None,
+) -> str | None:
+    """Generate a Persian dark-themed table image of pending ForexFactory events."""
+
+    if db_path is None:
+        db_path = DB_PATH
+    if output_path is None:
+        output_path = OUTPUT_PATH
+    if cal_tz is None:
+        cal_tz = CALENDAR_TIMEZONE
+
+    tz = ZoneInfo(cal_tz)
+    events = _get_events(db_path, cal_tz)
+    if events is None:
+        return None
+
+    now_dt = datetime.now().astimezone()
+
+    # ── filter & prepare rows ────────────────────────────────────
+    rows = []
+    for ev in events:
+        ev_dt = _parse_dt(ev["event_date"], ev["event_time"], tz)
+        if ev_dt is None:
+            continue
+
+        # convert event time to Tehran timezone for display
+        ev_tehran = ev_dt.astimezone(TEHRAN_TZ)
+        display_date = _format_date_fa(ev_tehran.strftime("%m-%d-%Y"))
+        display_time = ev_tehran.strftime("%H:%M").translate(_TRANS_DIGITS)
+
+        impact_fa = IMPACT_LABELS_FA.get(ev["impact"], ev["impact"])
+        status = "✔" if ev.get("alert_pre_sent") else ""
+
+        # use stored Persian title from pre-alert translation, fallback to English
+        title_fa = ev.get("title_fa")
+        if title_fa:
+            display_title = title_fa
+        else:
+            # try on-the-fly translation (client timeout=6s, no retries)
+            display_title = ev["title"]
+            try:
+                translate = _get_translate_fn()
+                result = translate(ev["title"])
+                if result:
+                    display_title = result
+                    # save for next time
+                    conn2 = sqlite3.connect(db_path)
+                    conn2.execute(
+                        "UPDATE forex_events SET title_fa = ? WHERE id = ?",
+                        (result, ev["id"]),
+                    )
+                    conn2.commit()
+                    conn2.close()
+            except Exception:
+                pass
+
+        rows.append({
+            "status":   status,
+            "impact":   impact_fa,
+            "country":  ev["country"],
+            "title":    display_title,
+            "date":     display_date,
+            "time":     display_time,
+        })
+
+    if not rows:
+        print("[INFO] No pending forex events to render.")
+        return None
+
+    # ── compute image dimensions ─────────────────────────────────
+    total_width = (sum(COL_WIDTHS[c] for c in COL_ORDER)
+                   + PADDING_X * 2
+                   + len(COL_ORDER) * 2)
+    total_height = (PADDING_Y + TITLE_HEIGHT + HEADER_HEIGHT
+                    + ROW_HEIGHT * len(rows) + FOOTER_HEIGHT + PADDING_Y)
+
+    # ── create image ─────────────────────────────────────────────
+    img = Image.new("RGBA", (total_width, total_height), BG_COLOR)
+    draw = ImageDraw.Draw(img)
+
+    font_title  = _load_font(26, bold=True)
+    font_header = _load_font(17, bold=True)
+    font_cell   = _load_font(16, bold=False)
+    font_footer = _load_font(14, bold=False)
+    font_status = _load_font(17, bold=True)
+
+    # ── title (Persian) — right-aligned ──────────────────────────
+    title_text = f"📊 رویدادهای اقتصادی امروز — ForexFactory  ({_fa_num(len(rows))} رویداد)"
+    title_bbox = font_title.getbbox(title_text)
+    title_w = title_bbox[2] - title_bbox[0]
+    title_x = total_width - PADDING_X - title_w
+    draw.text((title_x, PADDING_Y + 16), title_text, fill=ACCENT_VIOLET, font=font_title)
+
+    # ── header row (RTL) ─────────────────────────────────────────
+    y = PADDING_Y + TITLE_HEIGHT
+    draw.rectangle(
+        [(PADDING_X, y), (total_width - PADDING_X, y + HEADER_HEIGHT)],
+        fill=HEADER_BG,
+    )
+    x = total_width - PADDING_X
+    for col in COL_ORDER:
+        label = COL_LABELS[col]
+        tw = COL_WIDTHS[col]
+        x -= tw
+        label_bbox = font_header.getbbox(label)
+        label_w = label_bbox[2] - label_bbox[0]
+        # right-align
+        draw.text((x + tw - label_w - 4, y + 16), label, fill=ACCENT_VIOLET, font=font_header)
+        x -= 2
+
+    # ── separator ────────────────────────────────────────────────
+    y += HEADER_HEIGHT
+    draw.line(
+        [(PADDING_X, y), (total_width - PADDING_X, y)],
+        fill=BORDER_COLOR, width=1,
+    )
+
+    # ── data rows (RTL) ──────────────────────────────────────────
+    for i, row in enumerate(rows):
+        row_y = y + i * ROW_HEIGHT
+        bg = ROW_ODD if i % 2 == 0 else ROW_EVEN
+        draw.rectangle(
+            [(PADDING_X, row_y), (total_width - PADDING_X, row_y + ROW_HEIGHT)],
+            fill=bg,
+        )
+
+        x = total_width - PADDING_X
+        for col in COL_ORDER:
+            val = row[col]
+            tw = COL_WIDTHS[col]
+            x -= tw
+
+            if col == "status":
+                color = SENT_COLOR if val else TEXT_SECONDARY
+                draw.text((x + tw//2 - 8, row_y + 14), val or "·", fill=color, font=font_status)
+            elif col == "impact":
+                orig_impact = {"بالا": "High", "متوسط": "Medium", "پایین": "Low"}.get(val, "")
+                bbox = font_cell.getbbox(val)
+                text_w = bbox[2] - bbox[0]
+                draw.text((x + tw - text_w - 4, row_y + 14), val, fill=_impact_color(orig_impact), font=font_cell)
+            elif col == "title":
+                truncated = _truncate(val, font_cell, tw - 8)
+                bbox = font_cell.getbbox(truncated)
+                text_w = bbox[2] - bbox[0]
+                draw.text((x + tw - text_w - 4, row_y + 14), truncated, fill=TEXT_PRIMARY, font=font_cell)
+            else:
+                bbox = font_cell.getbbox(val)
+                text_w = bbox[2] - bbox[0]
+                draw.text((x + tw - text_w - 4, row_y + 14), val, fill=TEXT_PRIMARY, font=font_cell)
+
+            x -= 2
+
+        # row border
+        draw.line(
+            [(PADDING_X, row_y + ROW_HEIGHT), (total_width - PADDING_X, row_y + ROW_HEIGHT)],
+            fill=BORDER_COLOR, width=1,
+        )
+
+    # ── footer (Persian) ─────────────────────────────────────────
+    footer_y = y + len(rows) * ROW_HEIGHT + 8
+    tehran_now = now_dt.astimezone(TEHRAN_TZ)
+    today_str_fa = _format_date_fa(tehran_now.strftime("%m-%d-%Y"))
+    footer_text = f"🗓 {today_str_fa}  |  به وقت تهران  |  @ForexEyvazi"
+    draw.text((PADDING_X + 12, footer_y), footer_text, fill=TEXT_SECONDARY, font=font_footer)
+
+    # ── outer border ─────────────────────────────────────────────
+    draw.rectangle(
+        [(PADDING_X - 1, PADDING_Y - 1), (total_width - PADDING_X + 1, footer_y + 24)],
+        outline=BORDER_COLOR, width=1,
+    )
+
+    # ── save ─────────────────────────────────────────────────────
+    img.save(output_path, "PNG")
+    print(f"[OK] تصویر ذخیره شد → {output_path}  ({total_width}x{total_height})")
+    return output_path
+
+
+if __name__ == "__main__":
+    result = generate_forex_image()
+    if result:
+        print(f"\n✅ انجام شد! مسیر: {result}")
+    else:
+        print("\n❌ تصویری تولید نشد (رویدادی موجود نیست یا خطا در پایگاه داده).")

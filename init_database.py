@@ -77,6 +77,11 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+    try:
+        cursor.execute("ALTER TABLE forex_events ADD COLUMN title_fa TEXT")
+    except sqlite3.OperationalError:
+        pass
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS news (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,6 +103,16 @@ def init_db():
         cursor.execute("ALTER TABLE news ADD COLUMN sent_at TEXT")
     except sqlite3.OperationalError:
         pass
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS daily_snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        snapshot_date TEXT UNIQUE,
+        image_path TEXT,
+        sent_at TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
 
     conn.commit()
     conn.close()

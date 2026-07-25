@@ -41,6 +41,9 @@ RESET_DATABASE = os.getenv("RESET_DATABASE", "false").strip().lower() == "true"
 
 ENABLE_FOREX_ALERTS = os.getenv("ENABLE_FOREX_ALERTS", "true").strip().lower() == "true"
 
+FOREX_IMAGE_SEND = os.getenv("FOREX_IMAGE_SEND", "false").strip().lower() == "true"
+FOREX_IMAGE_SEND_TIME = os.getenv("FOREX_IMAGE_SEND_TIME", "08:00")
+
 TIME_PROTECTION = os.getenv("TIME_PROTECTION", "true").strip().lower() == "true"
 NEWS_AGE_LIMIT_HOURS = int(os.getenv("NEWS_AGE_LIMIT_HOURS", 24))
 
@@ -66,6 +69,7 @@ def reload_env():
     global TIME_PROTECTION, NEWS_AGE_LIMIT_HOURS
     global BOT_PANEL_BOT_TOKEN, ADMIN_TELEGRAM_ID, BOT_PANEL
     global HIGH_IMPACT_KEYWORDS, SOURCE_SCORE, ACTIVE_SOURCES
+    global FOREX_IMAGE_SEND, FOREX_IMAGE_SEND_TIME
 
     load_dotenv(dotenv_path=os.path.join(set_path.base_path, "main.env"), override=True)
 
@@ -101,3 +105,5 @@ def reload_env():
     HIGH_IMPACT_KEYWORDS = json.loads(os.getenv("HIGH_IMPACT_KEYWORDS"))
     SOURCE_SCORE = json.loads(os.getenv("SOURCE_SCORE"))
     ACTIVE_SOURCES = [name for name, score in SOURCE_SCORE.items() if score > 0]
+    FOREX_IMAGE_SEND = os.getenv("FOREX_IMAGE_SEND", "false").strip().lower() == "true"
+    FOREX_IMAGE_SEND_TIME = os.getenv("FOREX_IMAGE_SEND_TIME", "08:00")

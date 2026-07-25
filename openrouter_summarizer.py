@@ -7,7 +7,7 @@ import config
 client = OpenAI(
     api_key=config.OPENROUTER_API_KEY,
     base_url=config.OPENROUTER_BASE_URL,
-    timeout=30
+    timeout=6
 )
 
 
@@ -17,30 +17,26 @@ def translate_title_fa(title: str) -> str | None:
     if title in title_cache:
         return title_cache[title]
     prompt = f"فقط عنوان را به فارسی روان ترجمه کن و هیچ چیز دیگر:\n\n{title}"
-    for attempt in range(2):
-        try:
-            response = client.chat.completions.create(
-                model=config.OPENROUTER_MODEL,
-                messages=[
-                    {"role": "system", "content": "فقط عنوان را به فارسی ترجمه کن و هیچ چیز دیگر ننویس."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.1,
-                max_tokens=100
-            )
-            text = response.choices[0].message.content
-            if text and text.strip():
-                clean = text.strip()
-                for prefix in ["عنوان خبر به فارسی روان و دقیق:", "عنوان خبر:", "عنوان به فارسی:"]:
-                    if clean.startswith(prefix):
-                        clean = clean[len(prefix):].strip()
-                title_cache[title] = clean
-                return clean
-        except Exception as e:
-            logger.error(f"Title translation error (attempt {attempt + 1}): {e}")
-            if attempt == 0:
-                import time
-                time.sleep(2)
+    try:
+        response = client.chat.completions.create(
+            model=config.OPENROUTER_MODEL,
+            messages=[
+                {"role": "system", "content": "فقط عنوان را به فارسی ترجمه کن و هیچ چیز دیگر ننویس."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.1,
+            max_tokens=100
+        )
+        text = response.choices[0].message.content
+        if text and text.strip():
+            clean = text.strip()
+            for prefix in ["عنوان خبر به فارسی روان و دقیق:", "عنوان خبر:", "عنوان به فارسی:"]:
+                if clean.startswith(prefix):
+                    clean = clean[len(prefix):].strip()
+            title_cache[title] = clean
+            return clean
+    except Exception as e:
+        logger.error(f"Title translation error: {e}")
     return None
 
 

@@ -11,6 +11,7 @@ __pycache__/
 # Database & cache files
 news_storage.db
 forex_cache.json
+forex_events_snapshot.png
 
 # Build artifacts
 *.exe
