@@ -35,10 +35,18 @@ def _get_translate_fn():
 # ── output path ──────────────────────────────────────────────────
 OUTPUT_PATH = os.path.join(set_path.base_path, "forex_events_snapshot.png")
 
-# ── fonts ────────────────────────────────────────────────────────
-VAZIR_BOLD_PATH = "/usr/share/fonts/vazirmatn/Vazirmatn-RD-FD-Bold.ttf"
-VAZIR_REGULAR_PATH = "/usr/share/fonts/vazirmatn/Vazirmatn-FD-Light.ttf"
-MONO_PATH = "/usr/share/fonts/TTF/CaskaydiaMonoNerdFont-Regular.ttf"
+# ── fonts (try bundled first, fallback to system) ─────────────────
+import sys
+import os
+_FONTS_DIR = os.path.join(os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__), "fonts")
+
+def _resolve_font(bundled: str, system: str) -> str:
+    p = os.path.join(_FONTS_DIR, bundled)
+    return p if os.path.exists(p) else system
+
+VAZIR_BOLD_PATH   = _resolve_font("Vazirmatn-RD-FD-Bold.ttf",   "/usr/share/fonts/vazirmatn/Vazirmatn-RD-FD-Bold.ttf")
+VAZIR_REGULAR_PATH= _resolve_font("Vazirmatn-FD-Light.ttf",     "/usr/share/fonts/vazirmatn/Vazirmatn-FD-Light.ttf")
+MONO_PATH         = _resolve_font("CaskaydiaMonoNerdFont-Regular.ttf", "/usr/share/fonts/TTF/CaskaydiaMonoNerdFont-Regular.ttf")
 
 # ── colour palette ───────────────────────────────────────────────
 BG_COLOR       = (18, 18, 22, 255)
