@@ -13,11 +13,6 @@ from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageDraw, ImageFont
 
-# ── ensure proxy is set before OpenAI client initializes ──────────
-for _key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
-    if _key not in os.environ:
-        os.environ[_key] = "http://127.0.0.1:10808"
-
 import set_path  # noqa: F401 — ensure CWD is project root
 from config import DB_PATH, CALENDAR_TIMEZONE
 
