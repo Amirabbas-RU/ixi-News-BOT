@@ -51,8 +51,8 @@ BOT_PANEL_BOT_TOKEN = os.getenv("BOT_PANEL_BOT_TOKEN", "")
 ADMIN_TELEGRAM_ID = os.getenv("ADMIN_TELEGRAM_ID", "")
 BOT_PANEL = os.getenv("BOT_PANEL", "false").strip().lower() == "true"
 
-HIGH_IMPACT_KEYWORDS = json.loads(os.getenv("HIGH_IMPACT_KEYWORDS"))
-SOURCE_SCORE = json.loads(os.getenv("SOURCE_SCORE"))
+HIGH_IMPACT_KEYWORDS = json.loads(os.getenv("HIGH_IMPACT_KEYWORDS", "{}"))
+SOURCE_SCORE = json.loads(os.getenv("SOURCE_SCORE", "{}"))
 ACTIVE_SOURCES = [name for name, score in SOURCE_SCORE.items() if score > 0]
 
 

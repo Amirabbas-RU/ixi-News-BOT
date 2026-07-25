@@ -38,7 +38,7 @@ OUTPUT_PATH = os.path.join(set_path.base_path, "forex_events_snapshot.png")
 # ── fonts (try bundled first, fallback to system) ─────────────────
 import sys
 import os
-_FONTS_DIR = os.path.join(os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__), "fonts")
+_FONTS_DIR = os.path.join(sys._MEIPASS if getattr(sys, 'frozen', False) else os.path.dirname(__file__), "fonts")
 
 def _resolve_font(bundled: str, system: str) -> str:
     p = os.path.join(_FONTS_DIR, bundled)
