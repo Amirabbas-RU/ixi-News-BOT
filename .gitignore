@@ -12,6 +12,7 @@ __pycache__/
 news_storage.db
 forex_cache.json
 forex_events_snapshot.png
+bot.lock
 
 # Build artifacts
 *.exe
