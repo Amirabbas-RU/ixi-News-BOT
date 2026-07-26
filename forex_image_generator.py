@@ -12,6 +12,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageDraw, ImageFont
+import arabic_reshaper
+from bidi.algorithm import get_display
 
 import set_path  # noqa: F401 — ensure CWD is project root
 from config import DB_PATH, CALENDAR_TIMEZONE
@@ -101,6 +103,17 @@ def _fa_num(n) -> str:
     return str(n).translate(_TRANS_DIGITS)
 
 
+def _reshape_persian(text: str) -> str:
+    """Reshape Persian/Arabic text for proper rendering via Pillow (no raqm)."""
+    if not text:
+        return text
+    try:
+        reshaped = arabic_reshaper.reshape(text)
+        return get_display(reshaped)
+    except Exception:
+        return text
+
+
 def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
     path = VAZIR_BOLD_PATH if bold else VAZIR_REGULAR_PATH
     try:
@@ -129,8 +142,8 @@ def _get_events(db_path: str, cal_tz: str) -> list[dict] | None:
                    alert_pre_sent, alert_15min_sent, alert_30min_sent,
                    result_sent, news_inserted
             FROM forex_events
-            WHERE news_inserted = 0 OR event_date = ?
-            ORDER BY event_date, event_time
+            WHERE event_date = ?
+            ORDER BY event_time
             """,
             (today_str,),
         )
@@ -304,10 +317,11 @@ def generate_forex_image(
 
     # ── title (Persian) — right-aligned ──────────────────────────
     title_text = f"📊 رویدادهای اقتصادی امروز — ForexFactory  ({_fa_num(len(rows))} رویداد)"
-    title_bbox = font_title.getbbox(title_text)
+    reshaped_title = _reshape_persian(title_text)
+    title_bbox = font_title.getbbox(reshaped_title)
     title_w = title_bbox[2] - title_bbox[0]
     title_x = total_width - PADDING_X - title_w
-    draw.text((title_x, PADDING_Y + 16), title_text, fill=ACCENT_VIOLET, font=font_title)
+    draw.text((title_x, PADDING_Y + 16), reshaped_title, fill=ACCENT_VIOLET, font=font_title)
 
     # ── header row (RTL) ─────────────────────────────────────────
     y = PADDING_Y + TITLE_HEIGHT
@@ -318,12 +332,13 @@ def generate_forex_image(
     x = total_width - PADDING_X
     for col in COL_ORDER:
         label = COL_LABELS[col]
+        reshaped_label = _reshape_persian(label)
         tw = COL_WIDTHS[col]
         x -= tw
-        label_bbox = font_header.getbbox(label)
+        label_bbox = font_header.getbbox(reshaped_label)
         label_w = label_bbox[2] - label_bbox[0]
         # right-align
-        draw.text((x + tw - label_w - 4, y + 16), label, fill=ACCENT_VIOLET, font=font_header)
+        draw.text((x + tw - label_w - 4, y + 16), reshaped_label, fill=ACCENT_VIOLET, font=font_header)
         x -= 2
 
     # ── separator ────────────────────────────────────────────────
@@ -353,18 +368,21 @@ def generate_forex_image(
                 draw.text((x + tw//2 - 8, row_y + 14), val or "·", fill=color, font=font_status)
             elif col == "impact":
                 orig_impact = {"بالا": "High", "متوسط": "Medium", "پایین": "Low"}.get(val, "")
-                bbox = font_cell.getbbox(val)
+                reshaped_val = _reshape_persian(val)
+                bbox = font_cell.getbbox(reshaped_val)
                 text_w = bbox[2] - bbox[0]
-                draw.text((x + tw - text_w - 4, row_y + 14), val, fill=_impact_color(orig_impact), font=font_cell)
+                draw.text((x + tw - text_w - 4, row_y + 14), reshaped_val, fill=_impact_color(orig_impact), font=font_cell)
             elif col == "title":
-                truncated = _truncate(val, font_cell, tw - 8)
+                reshaped_val = _reshape_persian(val)
+                truncated = _truncate(reshaped_val, font_cell, tw - 8)
                 bbox = font_cell.getbbox(truncated)
                 text_w = bbox[2] - bbox[0]
                 draw.text((x + tw - text_w - 4, row_y + 14), truncated, fill=TEXT_PRIMARY, font=font_cell)
             else:
-                bbox = font_cell.getbbox(val)
+                reshaped_val = _reshape_persian(val)
+                bbox = font_cell.getbbox(reshaped_val)
                 text_w = bbox[2] - bbox[0]
-                draw.text((x + tw - text_w - 4, row_y + 14), val, fill=TEXT_PRIMARY, font=font_cell)
+                draw.text((x + tw - text_w - 4, row_y + 14), reshaped_val, fill=TEXT_PRIMARY, font=font_cell)
 
             x -= 2
 
@@ -379,7 +397,7 @@ def generate_forex_image(
     tehran_now = now_dt.astimezone(TEHRAN_TZ)
     today_str_fa = _format_date_fa(tehran_now.strftime("%m-%d-%Y"))
     footer_text = f"🗓 {today_str_fa}  |  به وقت تهران  |  @ForexEyvazi"
-    draw.text((PADDING_X + 12, footer_y), footer_text, fill=TEXT_SECONDARY, font=font_footer)
+    draw.text((PADDING_X + 12, footer_y), _reshape_persian(footer_text), fill=TEXT_SECONDARY, font=font_footer)
 
     # ── outer border ─────────────────────────────────────────────
     draw.rectangle(

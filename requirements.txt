@@ -6,3 +6,5 @@ pyTelegramBotAPI
 beautifulsoup4
 pyinstaller
 Pillow
+arabic-reshaper
+python-bidi
