@@ -182,7 +182,6 @@ def _get_events(db_path: str, cal_tz: str) -> list[dict] | None:
     try:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
-        today_str = datetime.now(ZoneInfo(cal_tz)).strftime("%m-%d-%Y")
         cursor = conn.cursor()
         cursor.execute(
             """
@@ -191,10 +190,8 @@ def _get_events(db_path: str, cal_tz: str) -> list[dict] | None:
                    alert_pre_sent, alert_15min_sent, alert_30min_sent,
                    result_sent, news_inserted
             FROM forex_events
-            WHERE event_date = ?
-            ORDER BY event_time
+            ORDER BY event_date, event_time
             """,
-            (today_str,),
         )
         events = [dict(row) for row in cursor.fetchall()]
         conn.close()
