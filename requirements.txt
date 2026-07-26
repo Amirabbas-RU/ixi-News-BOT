@@ -8,3 +8,4 @@ pyinstaller
 Pillow
 arabic-reshaper
 python-bidi
+jdatetime

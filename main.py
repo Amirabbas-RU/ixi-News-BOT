@@ -684,10 +684,37 @@ def check_and_send_daily_snapshot():
     # send to channel
     try:
         with open(image_path, "rb") as img_file:
+            # Build Persian calendar caption
+            weekdays_fa = ["دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه", "شنبه", "یکشنبه"]
+            months_en_fa = {
+                1: "ژانویه", 2: "فوریه", 3: "مارس", 4: "آوریل",
+                5: "مه", 6: "ژوئن", 7: "جولای", 8: "اوت",
+                9: "سپتامبر", 10: "اکتبر", 11: "نوامبر", 12: "دسامبر",
+            }
+            tehran_dt = now_utc.astimezone(ZoneInfo("Asia/Tehran"))
+            wd = weekdays_fa[tehran_dt.weekday()]
+            day = tehran_dt.day
+            month_en = months_en_fa[tehran_dt.month]
+
+            # Jalali (Shamsi) date
+            try:
+                import jdatetime
+                jdate = jdatetime.date.fromgregorian(date=tehran_dt)
+                months_jalali_fa = {
+                    1: "فروردین", 2: "اردیبهشت", 3: "خرداد", 4: "تیر",
+                    5: "مرداد", 6: "شهریور", 7: "مهر", 8: "آبان",
+                    9: "آذر", 10: "دی", 11: "بهمن", 12: "اسفند",
+                }
+                jalali_str = f"{jdate.day} {months_jalali_fa[jdate.month]}"
+            except ImportError:
+                jalali_str = ""
+
+            caption = f"📅 تقویم اقتصادی {wd} {day} {month_en} | {jalali_str}\n💎💎 @ForexEyvazi 💎💎" if jalali_str else f"📅 تقویم اقتصادی {wd} {day} {month_en}\n💎💎 @ForexEyvazi 💎💎"
+
             my_bot.send_photo(
                 chat_id=TELEGRAM_CHANNEL_ID,
                 photo=img_file,
-                caption=f"📊 #خلاصه_رویدادهای_امروز — {now_utc.strftime('%Y-%m-%d')}",
+                caption=caption,
             )
         logger.info(green("Daily snapshot sent to Telegram channel"))
         _record_snapshot_sent(image_path)
