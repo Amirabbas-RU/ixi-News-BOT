@@ -57,7 +57,8 @@ def _reshape_persian(text: str) -> str:
             out = []
             for w in reversed(words):
                 if _rtl_word(w):
-                    out.append(w[::-1])
+                    rev = w[::-1].translate(str.maketrans("()", ")("))
+                    out.append(rev)
                 else:
                     out.append(w)
             return " ".join(out)
@@ -66,7 +67,8 @@ def _reshape_persian(text: str) -> str:
             out = []
             for w in words:
                 if _rtl_word(w):
-                    out.append(w[::-1])
+                    rev = w[::-1].translate(str.maketrans("()", ")("))
+                    out.append(rev)
                 else:
                     out.append(w)
             return " ".join(out)
