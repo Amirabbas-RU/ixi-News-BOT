@@ -13,7 +13,65 @@ from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageDraw, ImageFont
 import arabic_reshaper
-from bidi.algorithm import get_display
+
+# ── Persian text reshaping (no raqm / bidi C ext needed) ──────────
+_PERSIAN_RANGE = set(range(0x0590, 0x08FF + 1)) | set(range(0xFB50, 0xFDFF + 1)) | set(range(0xFE70, 0xFEFF + 1))
+
+
+def _is_persian(c: str) -> bool:
+    return ord(c) in _PERSIAN_RANGE
+
+
+def _rtl_word(w: str) -> bool:
+    """True if the first significant char is Persian/Arabic (RTL)."""
+    for c in w:
+        if c.isalpha() or c.isdigit():
+            return _is_persian(c)
+    return False
+
+
+def _reshape_persian(text: str) -> str:
+    """Reshape + reorder Persian text for LTR Pillow rendering (no raqm / bidi).
+
+    1. arabic_reshaper connects characters (initial/medial/final forms).
+    2. The word order is reversed (RTL text appears right-to-left, so
+       for LTR rendering the words must come in reverse order).
+    3. Each RTL word is internally reversed for correct LTR glyph order.
+    """
+    if not text:
+        return text
+    try:
+        reshaped = arabic_reshaper.reshape(text)
+        words = reshaped.split(" ")
+
+        # Tag words as RTL or not
+        rtl_flags = [_rtl_word(w) for w in words]
+
+        # Count RTL content words (skip pure-symbol words like emoji, arrows)
+        content_rtl = sum(1 for w, r in zip(words, rtl_flags) if r)
+        content_total = sum(1 for w in words if any(c.isalpha() or c.isdigit() for c in w))
+        is_rtl_text = content_rtl > 0 and content_rtl >= content_total // 2
+
+        if is_rtl_text:
+            # Reverse word order AND reverse each RTL word internally
+            out = []
+            for w in reversed(words):
+                if _rtl_word(w):
+                    out.append(w[::-1])
+                else:
+                    out.append(w)
+            return " ".join(out)
+        else:
+            # Mostly LTR text — just reverse internal RTL words
+            out = []
+            for w in words:
+                if _rtl_word(w):
+                    out.append(w[::-1])
+                else:
+                    out.append(w)
+            return " ".join(out)
+    except Exception:
+        return text
 
 import set_path  # noqa: F401 — ensure CWD is project root
 from config import DB_PATH, CALENDAR_TIMEZONE
@@ -101,17 +159,6 @@ _TRANS_DIGITS = str.maketrans(_EN_DIGITS, _FA_DIGITS)
 def _fa_num(n) -> str:
     """Convert a number to Persian digit string."""
     return str(n).translate(_TRANS_DIGITS)
-
-
-def _reshape_persian(text: str) -> str:
-    """Reshape Persian/Arabic text for proper rendering via Pillow (no raqm)."""
-    if not text:
-        return text
-    try:
-        reshaped = arabic_reshaper.reshape(text)
-        return get_display(reshaped)
-    except Exception:
-        return text
 
 
 def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
