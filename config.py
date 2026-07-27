@@ -43,6 +43,7 @@ ENABLE_FOREX_ALERTS = os.getenv("ENABLE_FOREX_ALERTS", "true").strip().lower() =
 
 FOREX_IMAGE_SEND = os.getenv("FOREX_IMAGE_SEND", "false").strip().lower() == "true"
 FOREX_IMAGE_SEND_TIME = os.getenv("FOREX_IMAGE_SEND_TIME", "08:00")
+FORCE_SNAPSHOT = os.getenv("FORCE_SNAPSHOT", "false").strip().lower() == "true"
 
 TIME_PROTECTION = os.getenv("TIME_PROTECTION", "true").strip().lower() == "true"
 NEWS_AGE_LIMIT_HOURS = int(os.getenv("NEWS_AGE_LIMIT_HOURS", 24))

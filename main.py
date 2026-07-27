@@ -56,6 +56,7 @@ NEWS_AGE_LIMIT_HOURS = config.NEWS_AGE_LIMIT_HOURS
 MAX_NEWS_AGE_HOURS = 48
 FOREX_IMAGE_SEND = config.FOREX_IMAGE_SEND
 FOREX_IMAGE_SEND_TIME = config.FOREX_IMAGE_SEND_TIME
+FORCE_SNAPSHOT = config.FORCE_SNAPSHOT
 _last_shown_date = None
 db_conn = None
 
@@ -69,7 +70,7 @@ def reload_config():
     global HIGH_IMPACT_KEYWORDS, SOURCE_SCORE
     global FOREXFACTORY_CALENDAR_URL, CALENDAR_TZ, FOREX_ALERT_IMPACTS
     global TIME_PROTECTION, NEWS_AGE_LIMIT_HOURS
-    global FOREX_IMAGE_SEND, FOREX_IMAGE_SEND_TIME
+    global FOREX_IMAGE_SEND, FOREX_IMAGE_SEND_TIME, FORCE_SNAPSHOT
 
     NEWS_UPDATE_INTERVAL_MINUTES = config.NEWS_UPDATE_INTERVAL_MINUTES
     DB_NAME = config.DB_NAME
@@ -90,6 +91,7 @@ def reload_config():
     NEWS_AGE_LIMIT_HOURS = config.NEWS_AGE_LIMIT_HOURS
     FOREX_IMAGE_SEND = config.FOREX_IMAGE_SEND
     FOREX_IMAGE_SEND_TIME = config.FOREX_IMAGE_SEND_TIME
+    FORCE_SNAPSHOT = config.FORCE_SNAPSHOT
 
 
 # ---------------------------------<< setup telegram bot >>---------------------------------
@@ -708,7 +710,13 @@ def check_and_send_daily_snapshot():
 
     # Already done for today?
     if today_prog.get("done"):
-        return
+        if FORCE_SNAPSHOT:
+            logger.info("FORCE_SNAPSHOT=True — regenerating despite progress file")
+            # reset prog so page==0 logic runs
+            today_prog = {"page": 0, "total_pages": 1, "done": False}
+            prog[today_str] = today_prog
+        else:
+            return
 
     from forex_image_generator import generate_forex_images
 
