@@ -361,6 +361,11 @@ def _render_image(rows: list[dict], output_path: str, page_num: int = 1, total_p
                 bbox = font_cell.getbbox(reshaped_val)
                 text_w = bbox[2] - bbox[0]
                 draw.text((x + tw - text_w - 4, row_y + 14), reshaped_val, fill=_impact_color(orig_impact), font=font_cell)
+            elif col == "status":
+                # row number — flush left within the cell
+                bbox = font_cell.getbbox(val)
+                text_w = bbox[2] - bbox[0]
+                draw.text((x + 4, row_y + 14), val, fill=TEXT_SECONDARY, font=font_cell)
             elif col == "title":
                 reshaped_val = _reshape_persian(val)
                 truncated = _truncate(reshaped_val, font_cell, tw - 8)
