@@ -671,6 +671,31 @@ def _record_snapshot_sent(image_path: str):
         logger.error(f"Failed to record snapshot sent: {e}")
 
 
+def _auto_reset_force_snapshot():
+    """After snapshot successfully sent, flip FORCE_SNAPSHOT back to false in main.env."""
+    env_path = os.path.join(os.path.dirname(__file__), "main.env")
+    try:
+        with open(env_path) as f:
+            lines = f.readlines()
+        changed = False
+        for i, line in enumerate(lines):
+            if line.strip().upper().startswith("FORCE_SNAPSHOT"):
+                # Replace with False regardless of current value
+                lines[i] = "FORCE_SNAPSHOT = false\n"
+                changed = True
+                break
+        if not changed:
+            lines.append("FORCE_SNAPSHOT = false\n")
+        with open(env_path, "w") as f:
+            f.writelines(lines)
+            os.fsync(f.fileno())
+        global FORCE_SNAPSHOT
+        FORCE_SNAPSHOT = False
+        logger.info("FORCE_SNAPSHOT auto-reset to false (snapshot sent)")
+    except Exception as e:
+        logger.error(f"Failed to auto-reset FORCE_SNAPSHOT: {e}")
+
+
 def check_and_send_daily_snapshot():
     """Generate and send the daily forex events snapshot image — one page per cycle.
 
@@ -765,6 +790,8 @@ def check_and_send_daily_snapshot():
         today_prog["done"] = total_pages == 1  # mark done if only 1 page
         prog[today_str] = today_prog
         _save_snapshot_progress(prog)
+        if today_prog["done"]:
+            _auto_reset_force_snapshot()
 
         if total_pages == 1:
             _record_snapshot_sent(image_paths[0])
@@ -780,6 +807,7 @@ def check_and_send_daily_snapshot():
         today_prog["done"] = True
         prog[today_str] = today_prog
         _save_snapshot_progress(prog)
+        _auto_reset_force_snapshot()
         _record_snapshot_sent("(progressive)")
         logger.info(green("All snapshot pages sent for today"))
         return
