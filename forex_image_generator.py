@@ -143,7 +143,7 @@ COL_WIDTHS = {
 }
 
 COL_LABELS = {
-    "status":   "وضعیت",
+    "status":   "ردیف",
     "impact":   "تاثیر",
     "country":  "کشور",
     "title":    "عنوان رویداد",
@@ -346,10 +346,7 @@ def _render_image(rows: list[dict], output_path: str, page_num: int = 1, total_p
             tw = COL_WIDTHS[col]
             x -= tw
 
-            if col == "status":
-                color = SENT_COLOR if val else TEXT_SECONDARY
-                draw.text((x + tw//2 - 8, row_y + 14), val or "·", fill=color, font=font_status)
-            elif col == "impact":
+            if col == "impact":
                 orig_impact = {"بالا": "High", "متوسط": "Medium", "پایین": "Low"}.get(val, "")
                 reshaped_val = _reshape_persian(val)
                 bbox = font_cell.getbbox(reshaped_val)
@@ -474,6 +471,9 @@ def generate_forex_images(
         chunk = all_rows[start:end]
         if not chunk:
             return None
+        # replace status with row number (1-based within this page)
+        for i, row in enumerate(chunk, 1):
+            row["status"] = str(i)
         if total_pages > 1:
             page_path = f"{base}_p{page + 1}{ext}"
         else:
