@@ -125,7 +125,7 @@ IMPACT_EMOJIS_FA = {"High": "🔴", "Medium": "🟡", "Low": "🟢"}
 TEHRAN_TZ = ZoneInfo("Asia/Tehran")
 
 # ── layout ───────────────────────────────────────────────────────
-PADDING_X = 32
+PADDING_X = 48
 PADDING_Y = 28
 ROW_HEIGHT = 56
 HEADER_HEIGHT = 60
