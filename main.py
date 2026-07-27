@@ -8,6 +8,7 @@ import sqlite3
 from logger import logger, green
 import re
 import sys
+import json
 import threading
 import atexit
 
@@ -609,6 +610,33 @@ def check_forex_calendar():
 
 
 # ---------------------------------<< Daily Snapshot Image >>---------------------------------
+
+_SNAPSHOT_PROGRESS_PATH = os.path.join(os.path.dirname(__file__), ".snapshot_progress.json")
+
+
+def _snapshot_progress() -> dict:
+    """Load the JSON-based snapshot page tracker.  Returns {date_str: {page, total_pages, done}}."""
+    try:
+        with open(_SNAPSHOT_PROGRESS_PATH) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_snapshot_progress(prog: dict):
+    with open(_SNAPSHOT_PROGRESS_PATH, "w") as f:
+        json.dump(prog, f, indent=2)
+
+
+def _page_events_all_passed(page_rows: list) -> bool:
+    """Return True if every event on *page_rows* has already happened (event_time in past)."""
+    now = datetime.now(timezone.utc)
+    for row in page_rows:
+        if row["ev_dt"] is not None and row["ev_dt"] > now:
+            return False
+    return True
+
+
 def _snapshot_already_sent_today() -> bool:
     """Check if a daily snapshot has already been sent today (UTC date)."""
     try:
@@ -637,11 +665,16 @@ def _record_snapshot_sent(image_path: str):
         logger.info(green(f"Daily snapshot recorded for {today_str}"))
     except Exception as e:
         db_conn.rollback()
-        logger.error(f"Record snapshot error: {e}")
+        logger.error(f"Failed to record snapshot sent: {e}")
 
 
 def check_and_send_daily_snapshot():
-    """Generate and send the daily forex events snapshot image if enabled and due."""
+    """Generate and send the daily forex events snapshot image — one page per cycle.
+
+    - Page 1 is sent at the configured time (15:05 Tehran).
+    - Subsequent pages are sent only when ALL events on the previous page have passed.
+    - When the last page is sent, the day is marked complete.
+    """
     if not FOREX_IMAGE_SEND:
         return
 
@@ -665,24 +698,126 @@ def check_and_send_daily_snapshot():
 
     # only send if we've passed the target time today
     if current_minutes < target_minutes:
-        logger.info(f"Snapshot: not yet {FOREX_IMAGE_SEND_TIME} UTC, waiting")
+        logger.info(f"Snapshot: not yet {FOREX_IMAGE_SEND_TIME} Tehran, waiting")
         return
 
-    # check if already sent today
-    if _snapshot_already_sent_today():
-        logger.info("Snapshot: already sent today, skipping")
+    today_str = now_utc.strftime("%Y-%m-%d")
+    prog = _snapshot_progress()
+    today_prog = prog.get(today_str, {"page": 0, "total_pages": 1, "done": False})
+
+    # Already done for today?
+    if today_prog.get("done"):
         return
 
-    logger.info("Generating daily forex events snapshot image...")
     from forex_image_generator import generate_forex_images
 
-    image_paths = generate_forex_images()
-    if not image_paths:
-        logger.warning("No snapshot image generated (no events or error)")
+    if today_prog["page"] == 0:
+        # ── First run today: generate page 1 ─────────────────────
+        logger.info("Generating page 1 of daily snapshot...")
+
+        image_paths = generate_forex_images(page_number=1)
+        if not image_paths:
+            logger.warning("No snapshot image generated (no events or error)")
+            return
+
+        # We need to know total pages - generate ALL to count, discard extras
+        all_paths = generate_forex_images()
+        total_pages = len(all_paths)
+        # clean up extra generated files
+        for p in all_paths:
+            if p != image_paths[0] and os.path.exists(p):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+        if total_pages == 0:
+            total_pages = 1
+
+        # Store row datetimes for pass-check (re-read from the fresh gen)
+        _store_today_event_dts(now_utc)
+
+        # Build caption and send
+        caption = _build_snapshot_caption(now_utc)
+        try:
+            with open(image_paths[0], "rb") as img_file:
+                my_bot.send_photo(
+                    chat_id=TELEGRAM_CHANNEL_ID,
+                    photo=img_file,
+                    caption=caption,
+                )
+            logger.info(green(f"Sent snapshot page 1/{total_pages}"))
+        except Exception as e:
+            logger.error(f"Failed to send snapshot page 1: {e}")
+            return
+
+        # Store progress (page=1 means "page 1 has been sent")
+        today_prog["page"] = 1
+        today_prog["total_pages"] = total_pages
+        today_prog["done"] = total_pages == 1  # mark done if only 1 page
+        prog[today_str] = today_prog
+        _save_snapshot_progress(prog)
+
+        if total_pages == 1:
+            _record_snapshot_sent(image_paths[0])
         return
 
-    # Build Persian calendar caption once
-    weekdays_fa = ["دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه", "شنبه", "یکشنبه"]
+    # ── Subsequent pages: check if current page's events have all passed ──
+    current_page = today_prog["page"]
+    total_pages = today_prog["total_pages"]
+
+    logger.info(f"Snapshot progress: page {current_page}/{total_pages} sent")
+
+    if current_page >= total_pages:
+        today_prog["done"] = True
+        prog[today_str] = today_prog
+        _save_snapshot_progress(prog)
+        _record_snapshot_sent("(progressive)")
+        logger.info(green("All snapshot pages sent for today"))
+        return
+
+    # Check if ALL events on current page have passed
+    last_page_rows = _load_page_event_dts(now_utc, current_page - 1)  # 0-based index
+    if last_page_rows is not None and not _page_events_all_passed(last_page_rows):
+        logger.info(f"Page {current_page} events still pending — waiting")
+        return
+
+    # All events on previous page have passed — send next page
+    next_page = current_page + 1
+    logger.info(f"Sending snapshot page {next_page}/{total_pages}...")
+
+    image_paths = generate_forex_images(page_number=next_page)
+    if not image_paths:
+        logger.warning(f"Page {next_page} generated no image — marking done")
+        today_prog["done"] = True
+        prog[today_str] = today_prog
+        _save_snapshot_progress(prog)
+        _record_snapshot_sent("(progressive)")
+        return
+
+    try:
+        with open(image_paths[0], "rb") as img_file:
+            my_bot.send_photo(
+                chat_id=TELEGRAM_CHANNEL_ID,
+                photo=img_file,
+                caption=_build_snapshot_caption(now_utc),
+            )
+        logger.info(green(f"Sent snapshot page {next_page}/{total_pages}"))
+    except Exception as e:
+        logger.error(f"Failed to send snapshot page {next_page}: {e}")
+        return
+
+    today_prog["page"] = next_page
+    if next_page >= total_pages:
+        today_prog["done"] = True
+        _record_snapshot_sent("(progressive)")
+        logger.info(green("All snapshot pages sent for today"))
+    prog[today_str] = today_prog
+    _save_snapshot_progress(prog)
+
+
+def _build_snapshot_caption(now_utc: datetime) -> str:
+    """Build the Persian calendar caption for snapshot images."""
+    weekdays_fa = ["دوشنبه", "سه\u200cشنبه", "چهارشنبه", "پنجشنبه", "جمعه", "شنبه", "یکشنبه"]
     months_en_fa = {
         1: "ژانویه", 2: "فوریه", 3: "مارس", 4: "آوریل",
         5: "مه", 6: "ژوئن", 7: "جولای", 8: "اوت",
@@ -706,63 +841,52 @@ def check_and_send_daily_snapshot():
     except ImportError:
         jalali_str = ""
 
-    caption = f"📅 تقویم اقتصادی {wd} {day} {month_en} | {jalali_str}\n💎💎 @ForexEyvazi 💎💎" if jalali_str else f"📅 تقویم اقتصادی {wd} {day} {month_en}\n💎💎 @ForexEyvazi 💎💎"
-
-    # send to channel — media group (album) if multiple images, single photo if one
-    if len(image_paths) == 1:
-        try:
-            with open(image_paths[0], "rb") as img_file:
-                my_bot.send_photo(
-                    chat_id=TELEGRAM_CHANNEL_ID,
-                    photo=img_file,
-                    caption=caption,
-                )
-            logger.info(green(f"Sent snapshot: {image_paths[0]}"))
-        except Exception as e:
-            logger.error(f"Failed to send snapshot {image_paths[0]}: {e}")
+    if jalali_str:
+        return f"📅 تقویم اقتصادی {wd} {day} {month_en} | {jalali_str}\n💎💎 @ForexEyvazi 💎💎"
     else:
-        try:
-            from telebot.types import InputMediaPhoto
+        return f"📅 تقویم اقتصادی {wd} {day} {month_en}\n💎💎 @ForexEyvazi 💎💎"
 
-            # keep file handles alive for the upload
-            media_group = []
-            file_handles = []
-            try:
-                for i, img_path in enumerate(image_paths):
-                    fh = open(img_path, "rb")
-                    file_handles.append(fh)
-                    m = InputMediaPhoto(
-                        media=fh,
-                        caption=caption if i == len(image_paths) - 1 else None,
-                    )
-                    media_group.append(m)
 
-                my_bot.send_media_group(
-                    chat_id=TELEGRAM_CHANNEL_ID,
-                    media=media_group,
-                )
-                logger.info(green(f"Sent snapshot album ({len(image_paths)} pages): {image_paths}"))
-            finally:
-                for fh in file_handles:
-                    fh.close()
-        except ImportError:
-            # fallback: send individually if InputMediaPhoto not available
-            for img_path in image_paths:
-                try:
-                    with open(img_path, "rb") as img_file:
-                        cap = caption if img_path == image_paths[-1] else ""
-                        my_bot.send_photo(
-                            chat_id=TELEGRAM_CHANNEL_ID,
-                            photo=img_file,
-                            caption=cap,
-                        )
-                    logger.info(green(f"Sent snapshot page: {img_path}"))
-                except Exception as e:
-                    logger.error(f"Failed to send snapshot page {img_path}: {e}")
-        except Exception as e:
-            logger.error(f"Failed to send snapshot album: {e}")
+# ── Snapshot page event-time tracker ──────────────────────────────────
+_SNAPSHOT_EVENTS_PATH = os.path.join(os.path.dirname(__file__), ".snapshot_events.json")
 
-    _record_snapshot_sent(image_paths[0])
+
+def _store_today_event_dts(now_utc: datetime):
+    """Store the event datetimes for today's snapshot (to check pass-conditions later)."""
+    from forex_image_generator import generate_forex_images, _parse_dt, _get_events, DB_PATH, CALENDAR_TIMEZONE
+    from zoneinfo import ZoneInfo
+    from datetime import datetime
+
+    events = _get_events(DB_PATH, CALENDAR_TIMEZONE)
+    if not events:
+        return
+    tz = ZoneInfo(CALENDAR_TIMEZONE)
+    rows = []
+    for ev in events:
+        ev_dt = _parse_dt(ev["event_date"], ev["event_time"], tz)
+        if ev_dt is not None:
+            rows.append(ev_dt.isoformat())
+    with open(_SNAPSHOT_EVENTS_PATH, "w") as f:
+        json.dump(rows, f)
+
+
+def _load_page_event_dts(now_utc: datetime, page_index: int) -> list | None:
+    """Load the event datetimes for a specific page (0-indexed)."""
+    max_rows = 20  # must match MAX_ROWS_PER_IMAGE in forex_image_generator
+    try:
+        with open(_SNAPSHOT_EVENTS_PATH) as f:
+            all_dts = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+    start = page_index * max_rows
+    end = start + max_rows
+    page_dts = all_dts[start:end]
+    if not page_dts:
+        return None
+
+    from datetime import datetime
+    return [datetime.fromisoformat(d) for d in page_dts]
 
 
 # ---------------------------------<< Main Function >>---------------------------------

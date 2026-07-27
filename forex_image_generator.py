@@ -131,8 +131,7 @@ ROW_HEIGHT = 56
 HEADER_HEIGHT = 60
 TITLE_HEIGHT = 72
 FOOTER_HEIGHT = 52
-MAX_ROWS_PER_IMAGE = 20          # default rows per image when total is small
-MAX_IMAGES = 2                   # never split into more than this many images
+MAX_ROWS_PER_IMAGE = 20          # rows per image (Telegram limit ~10000px high ~174 rows)
 
 COL_WIDTHS = {
     "status":   72,
@@ -410,11 +409,13 @@ def generate_forex_images(
     output_path: str = None,
     cal_tz: str = None,
     max_rows: int = MAX_ROWS_PER_IMAGE,
+    page_number: int = 0,
 ) -> list[str]:
     """Generate one or more dark-themed table images of pending ForexFactory events.
 
-    When there are more than *max_rows* events, the list is split across
-    multiple images (batched).  Returns a list of image paths (may be empty).
+    When *page_number* is 0 (default), ALL pages are generated and returned.
+    When *page_number* > 0, only that specific page is rendered.
+    The header shows "Page X of N" on every page.
     """
     if db_path is None:
         db_path = DB_PATH
@@ -438,51 +439,51 @@ def generate_forex_images(
             continue
 
         ev_tehran = ev_dt.astimezone(TEHRAN_TZ)
-        display_date = _format_date_fa(ev_tehran.strftime("%m-%d-%Y"))
-        display_time = ev_tehran.strftime("%H:%M").translate(_TRANS_DIGITS)
-
-        impact_fa = IMPACT_LABELS_FA.get(ev["impact"], ev["impact"])
-        status = "✔" if ev.get("alert_pre_sent") else ""
-
-        title_fa = ev.get("title_fa")
-        if title_fa:
-            display_title = title_fa
-        else:
-            display_title = ev["title"]
 
         all_rows.append({
-            "status":   status,
-            "impact":   impact_fa,
+            "ev_dt":    ev_dt,
+            "status":   "✔" if ev.get("alert_pre_sent") else "",
+            "impact":   IMPACT_LABELS_FA.get(ev["impact"], ev["impact"]),
             "country":  ev["country"],
-            "title":    display_title,
-            "date":     display_date,
-            "time":     display_time,
+            "title":    ev.get("title_fa") or ev["title"],
+            "date":     _format_date_fa(ev_tehran.strftime("%m-%d-%Y")),
+            "time":     ev_tehran.strftime("%H:%M").translate(_TRANS_DIGITS),
         })
 
     if not all_rows:
         print("[INFO] No pending forex events to render.")
         return []
 
-    # ── split into pages (at most MAX_IMAGES) ─────────────────────
-    n = len(all_rows)
-    rows_per_image = max(max_rows, (n + MAX_IMAGES - 1) // MAX_IMAGES)
-    total_pages = (n + rows_per_image - 1) // rows_per_image
-
-    paths = []
+    # ── split into pages ─────────────────────────────────────────
+    total_pages = (len(all_rows) + max_rows - 1) // max_rows
     base, ext = os.path.splitext(output_path)
 
-    for page in range(total_pages):
-        chunk = all_rows[page * rows_per_image:(page + 1) * rows_per_image]
+    def _render_page(page: int) -> str | None:
+        start = page * max_rows
+        end = start + max_rows
+        chunk = all_rows[start:end]
+        if not chunk:
+            return None
         if total_pages > 1:
             page_path = f"{base}_p{page + 1}{ext}"
         else:
             page_path = output_path
+        return _render_image(chunk, page_path, page_num=page + 1, total_pages=total_pages)
 
-        result = _render_image(chunk, page_path, page_num=page + 1, total_pages=total_pages)
-        if result:
-            paths.append(result)
-
-    return paths
+    if page_number > 0:
+        idx = page_number - 1
+        if idx < 0 or idx >= total_pages:
+            print(f"[WARN] Page {page_number} requested but only {total_pages} pages exist.")
+            return []
+        result = _render_page(idx)
+        return [result] if result else []
+    else:
+        paths = []
+        for page in range(total_pages):
+            result = _render_page(page)
+            if result:
+                paths.append(result)
+        return paths
 
 
 if __name__ == "__main__":
