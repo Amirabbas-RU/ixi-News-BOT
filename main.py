@@ -613,7 +613,7 @@ def check_forex_calendar():
 
 # ---------------------------------<< Daily Snapshot Image >>---------------------------------
 
-_SNAPSHOT_PROGRESS_PATH = os.path.join(os.path.dirname(__file__), ".snapshot_progress.json")
+_SNAPSHOT_PROGRESS_PATH = os.path.join(os.getcwd(), ".snapshot_progress.json")
 
 
 def _snapshot_progress() -> dict:

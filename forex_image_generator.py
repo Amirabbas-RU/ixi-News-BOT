@@ -463,8 +463,8 @@ def generate_forex_images(
 
         ev_tehran = ev_dt.astimezone(TEHRAN_TZ)
 
-        # only show today's events in Tehran timezone
-        if ev_tehran.date() != datetime.now(TEHRAN_TZ).date():
+        # only show upcoming events (not yet passed in Tehran time)
+        if ev_dt.astimezone(TEHRAN_TZ) < datetime.now(TEHRAN_TZ):
             continue
 
         all_rows.append({
