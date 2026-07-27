@@ -674,52 +674,95 @@ def check_and_send_daily_snapshot():
         return
 
     logger.info("Generating daily forex events snapshot image...")
-    from forex_image_generator import generate_forex_image
+    from forex_image_generator import generate_forex_images
 
-    image_path = generate_forex_image()
-    if image_path is None:
+    image_paths = generate_forex_images()
+    if not image_paths:
         logger.warning("No snapshot image generated (no events or error)")
         return
 
-    # send to channel
+    # Build Persian calendar caption once
+    weekdays_fa = ["دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه", "شنبه", "یکشنبه"]
+    months_en_fa = {
+        1: "ژانویه", 2: "فوریه", 3: "مارس", 4: "آوریل",
+        5: "مه", 6: "ژوئن", 7: "جولای", 8: "اوت",
+        9: "سپتامبر", 10: "اکتبر", 11: "نوامبر", 12: "دسامبر",
+    }
+    tehran_dt = now_utc.astimezone(ZoneInfo("Asia/Tehran"))
+    wd = weekdays_fa[tehran_dt.weekday()]
+    day = tehran_dt.day
+    month_en = months_en_fa[tehran_dt.month]
+
+    # Jalali (Shamsi) date
     try:
-        with open(image_path, "rb") as img_file:
-            # Build Persian calendar caption
-            weekdays_fa = ["دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه", "شنبه", "یکشنبه"]
-            months_en_fa = {
-                1: "ژانویه", 2: "فوریه", 3: "مارس", 4: "آوریل",
-                5: "مه", 6: "ژوئن", 7: "جولای", 8: "اوت",
-                9: "سپتامبر", 10: "اکتبر", 11: "نوامبر", 12: "دسامبر",
-            }
-            tehran_dt = now_utc.astimezone(ZoneInfo("Asia/Tehran"))
-            wd = weekdays_fa[tehran_dt.weekday()]
-            day = tehran_dt.day
-            month_en = months_en_fa[tehran_dt.month]
+        import jdatetime
+        jdate = jdatetime.date.fromgregorian(date=tehran_dt)
+        months_jalali_fa = {
+            1: "فروردین", 2: "اردیبهشت", 3: "خرداد", 4: "تیر",
+            5: "مرداد", 6: "شهریور", 7: "مهر", 8: "آبان",
+            9: "آذر", 10: "دی", 11: "بهمن", 12: "اسفند",
+        }
+        jalali_str = f"{jdate.day} {months_jalali_fa[jdate.month]}"
+    except ImportError:
+        jalali_str = ""
 
-            # Jalali (Shamsi) date
+    caption = f"📅 تقویم اقتصادی {wd} {day} {month_en} | {jalali_str}\n💎💎 @ForexEyvazi 💎💎" if jalali_str else f"📅 تقویم اقتصادی {wd} {day} {month_en}\n💎💎 @ForexEyvazi 💎💎"
+
+    # send to channel — media group (album) if multiple images, single photo if one
+    if len(image_paths) == 1:
+        try:
+            with open(image_paths[0], "rb") as img_file:
+                my_bot.send_photo(
+                    chat_id=TELEGRAM_CHANNEL_ID,
+                    photo=img_file,
+                    caption=caption,
+                )
+            logger.info(green(f"Sent snapshot: {image_paths[0]}"))
+        except Exception as e:
+            logger.error(f"Failed to send snapshot {image_paths[0]}: {e}")
+    else:
+        try:
+            from telebot.types import InputMediaPhoto
+
+            # keep file handles alive for the upload
+            media_group = []
+            file_handles = []
             try:
-                import jdatetime
-                jdate = jdatetime.date.fromgregorian(date=tehran_dt)
-                months_jalali_fa = {
-                    1: "فروردین", 2: "اردیبهشت", 3: "خرداد", 4: "تیر",
-                    5: "مرداد", 6: "شهریور", 7: "مهر", 8: "آبان",
-                    9: "آذر", 10: "دی", 11: "بهمن", 12: "اسفند",
-                }
-                jalali_str = f"{jdate.day} {months_jalali_fa[jdate.month]}"
-            except ImportError:
-                jalali_str = ""
+                for i, img_path in enumerate(image_paths):
+                    fh = open(img_path, "rb")
+                    file_handles.append(fh)
+                    m = InputMediaPhoto(
+                        media=fh,
+                        caption=caption if i == len(image_paths) - 1 else None,
+                    )
+                    media_group.append(m)
 
-            caption = f"📅 تقویم اقتصادی {wd} {day} {month_en} | {jalali_str}\n💎💎 @ForexEyvazi 💎💎" if jalali_str else f"📅 تقویم اقتصادی {wd} {day} {month_en}\n💎💎 @ForexEyvazi 💎💎"
+                my_bot.send_media_group(
+                    chat_id=TELEGRAM_CHANNEL_ID,
+                    media=media_group,
+                )
+                logger.info(green(f"Sent snapshot album ({len(image_paths)} pages): {image_paths}"))
+            finally:
+                for fh in file_handles:
+                    fh.close()
+        except ImportError:
+            # fallback: send individually if InputMediaPhoto not available
+            for img_path in image_paths:
+                try:
+                    with open(img_path, "rb") as img_file:
+                        cap = caption if img_path == image_paths[-1] else ""
+                        my_bot.send_photo(
+                            chat_id=TELEGRAM_CHANNEL_ID,
+                            photo=img_file,
+                            caption=cap,
+                        )
+                    logger.info(green(f"Sent snapshot page: {img_path}"))
+                except Exception as e:
+                    logger.error(f"Failed to send snapshot page {img_path}: {e}")
+        except Exception as e:
+            logger.error(f"Failed to send snapshot album: {e}")
 
-            my_bot.send_photo(
-                chat_id=TELEGRAM_CHANNEL_ID,
-                photo=img_file,
-                caption=caption,
-            )
-        logger.info(green("Daily snapshot sent to Telegram channel"))
-        _record_snapshot_sent(image_path)
-    except Exception as e:
-        logger.error(f"Failed to send daily snapshot: {e}")
+    _record_snapshot_sent(image_paths[0])
 
 
 # ---------------------------------<< Main Function >>---------------------------------

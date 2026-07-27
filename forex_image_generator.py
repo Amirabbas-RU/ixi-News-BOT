@@ -131,6 +131,8 @@ ROW_HEIGHT = 56
 HEADER_HEIGHT = 60
 TITLE_HEIGHT = 72
 FOOTER_HEIGHT = 52
+MAX_ROWS_PER_IMAGE = 20          # default rows per image when total is small
+MAX_IMAGES = 2                   # never split into more than this many images
 
 COL_WIDTHS = {
     "status":   72,
@@ -272,77 +274,12 @@ def _truncate(text: str, font: ImageFont.FreeTypeFont, max_width: int) -> str:
     return text[:lo] + "…" if lo > 0 else "…"
 
 
-def generate_forex_image(
-    db_path: str = None,
-    output_path: str = None,
-    cal_tz: str = None,
-) -> str | None:
-    """Generate a Persian dark-themed table image of pending ForexFactory events."""
-
-    if db_path is None:
-        db_path = DB_PATH
-    if output_path is None:
-        output_path = OUTPUT_PATH
-    if cal_tz is None:
-        cal_tz = CALENDAR_TIMEZONE
-
-    tz = ZoneInfo(cal_tz)
-    events = _get_events(db_path, cal_tz)
-    if events is None:
+def _render_image(rows: list[dict], output_path: str, page_num: int = 1, total_pages: int = 1) -> str | None:
+    """Render a single image from a list of prepared row dicts."""
+    if not rows:
         return None
 
     now_dt = datetime.now().astimezone()
-
-    # ── filter & prepare rows ────────────────────────────────────
-    rows = []
-    for ev in events:
-        ev_dt = _parse_dt(ev["event_date"], ev["event_time"], tz)
-        if ev_dt is None:
-            continue
-
-        # convert event time to Tehran timezone for display
-        ev_tehran = ev_dt.astimezone(TEHRAN_TZ)
-        display_date = _format_date_fa(ev_tehran.strftime("%m-%d-%Y"))
-        display_time = ev_tehran.strftime("%H:%M").translate(_TRANS_DIGITS)
-
-        impact_fa = IMPACT_LABELS_FA.get(ev["impact"], ev["impact"])
-        status = "✔" if ev.get("alert_pre_sent") else ""
-
-        # use stored Persian title from pre-alert translation, fallback to English
-        title_fa = ev.get("title_fa")
-        if title_fa:
-            display_title = title_fa
-        else:
-            # try on-the-fly translation (client timeout=6s, no retries)
-            display_title = ev["title"]
-            try:
-                translate = _get_translate_fn()
-                result = translate(ev["title"])
-                if result:
-                    display_title = result
-                    # save for next time
-                    conn2 = sqlite3.connect(db_path)
-                    conn2.execute(
-                        "UPDATE forex_events SET title_fa = ? WHERE id = ?",
-                        (result, ev["id"]),
-                    )
-                    conn2.commit()
-                    conn2.close()
-            except Exception:
-                pass
-
-        rows.append({
-            "status":   status,
-            "impact":   impact_fa,
-            "country":  ev["country"],
-            "title":    display_title,
-            "date":     display_date,
-            "time":     display_time,
-        })
-
-    if not rows:
-        print("[INFO] No pending forex events to render.")
-        return None
 
     # ── compute image dimensions ─────────────────────────────────
     total_width = (sum(COL_WIDTHS[c] for c in COL_ORDER)
@@ -362,7 +299,8 @@ def generate_forex_image(
     font_status = _load_font(17, bold=True)
 
     # ── title (Persian) — right-aligned ──────────────────────────
-    title_text = f"📊 رویدادهای اقتصادی امروز — ForexFactory  ({_fa_num(len(rows))} رویداد)"
+    page_suffix = f" — بخش {_fa_num(page_num)} از {_fa_num(total_pages)}" if total_pages > 1 else ""
+    title_text = f"📊 {_fa_num(len(rows))} رویداد پیش رو — ForexFactory{page_suffix}"
     reshaped_title = _reshape_persian(title_text)
     title_bbox = font_title.getbbox(reshaped_title)
     title_w = title_bbox[2] - title_bbox[0]
@@ -455,6 +393,96 @@ def generate_forex_image(
     img.save(output_path, "PNG")
     print(f"[OK] تصویر ذخیره شد → {output_path}  ({total_width}x{total_height})")
     return output_path
+
+
+def generate_forex_image(
+    db_path: str = None,
+    output_path: str = None,
+    cal_tz: str = None,
+) -> str | None:
+    """Legacy wrapper — returns the first image path (backward compat)."""
+    paths = generate_forex_images(db_path=db_path, output_path=output_path, cal_tz=cal_tz)
+    return paths[0] if paths else None
+
+
+def generate_forex_images(
+    db_path: str = None,
+    output_path: str = None,
+    cal_tz: str = None,
+    max_rows: int = MAX_ROWS_PER_IMAGE,
+) -> list[str]:
+    """Generate one or more dark-themed table images of pending ForexFactory events.
+
+    When there are more than *max_rows* events, the list is split across
+    multiple images (batched).  Returns a list of image paths (may be empty).
+    """
+    if db_path is None:
+        db_path = DB_PATH
+    if output_path is None:
+        output_path = OUTPUT_PATH
+    if cal_tz is None:
+        cal_tz = CALENDAR_TIMEZONE
+
+    tz = ZoneInfo(cal_tz)
+    events = _get_events(db_path, cal_tz)
+    if events is None:
+        return []
+
+    now_dt = datetime.now().astimezone()
+
+    # ── prepare rows ─────────────────────────────────────────────
+    all_rows = []
+    for ev in events:
+        ev_dt = _parse_dt(ev["event_date"], ev["event_time"], tz)
+        if ev_dt is None:
+            continue
+
+        ev_tehran = ev_dt.astimezone(TEHRAN_TZ)
+        display_date = _format_date_fa(ev_tehran.strftime("%m-%d-%Y"))
+        display_time = ev_tehran.strftime("%H:%M").translate(_TRANS_DIGITS)
+
+        impact_fa = IMPACT_LABELS_FA.get(ev["impact"], ev["impact"])
+        status = "✔" if ev.get("alert_pre_sent") else ""
+
+        title_fa = ev.get("title_fa")
+        if title_fa:
+            display_title = title_fa
+        else:
+            display_title = ev["title"]
+
+        all_rows.append({
+            "status":   status,
+            "impact":   impact_fa,
+            "country":  ev["country"],
+            "title":    display_title,
+            "date":     display_date,
+            "time":     display_time,
+        })
+
+    if not all_rows:
+        print("[INFO] No pending forex events to render.")
+        return []
+
+    # ── split into pages (at most MAX_IMAGES) ─────────────────────
+    n = len(all_rows)
+    rows_per_image = max(max_rows, (n + MAX_IMAGES - 1) // MAX_IMAGES)
+    total_pages = (n + rows_per_image - 1) // rows_per_image
+
+    paths = []
+    base, ext = os.path.splitext(output_path)
+
+    for page in range(total_pages):
+        chunk = all_rows[page * rows_per_image:(page + 1) * rows_per_image]
+        if total_pages > 1:
+            page_path = f"{base}_p{page + 1}{ext}"
+        else:
+            page_path = output_path
+
+        result = _render_image(chunk, page_path, page_num=page + 1, total_pages=total_pages)
+        if result:
+            paths.append(result)
+
+    return paths
 
 
 if __name__ == "__main__":
