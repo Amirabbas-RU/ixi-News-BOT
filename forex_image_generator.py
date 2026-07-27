@@ -125,7 +125,7 @@ IMPACT_EMOJIS_FA = {"High": "🔴", "Medium": "🟡", "Low": "🟢"}
 TEHRAN_TZ = ZoneInfo("Asia/Tehran")
 
 # ── layout ───────────────────────────────────────────────────────
-PADDING_X = 48
+PADDING_X = 72
 PADDING_Y = 28
 ROW_HEIGHT = 56
 HEADER_HEIGHT = 60
@@ -446,6 +446,10 @@ def generate_forex_images(
             continue
 
         ev_tehran = ev_dt.astimezone(TEHRAN_TZ)
+
+        # skip events whose time has already passed in Tehran
+        if ev_tehran < datetime.now(TEHRAN_TZ):
+            continue
 
         all_rows.append({
             "ev_dt":    ev_dt,
