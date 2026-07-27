@@ -11,10 +11,14 @@ import sqlite3
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, features
 import arabic_reshaper
 
-# ── Persian text reshaping (no raqm / bidi C ext needed) ──────────
+# ── RAQM (HarfBuzz) available? If yes, Pillow handles Persian shaping natively.
+#    Skip manual arabic_reshaper + reversal to avoid double-shaping garbage.
+_HAS_RAQM = features.check("raqm")
+
+# ── Persian text reshaping (only when RAQM is unavailable) ───────────
 _PERSIAN_RANGE = set(range(0x0590, 0x08FF + 1)) | set(range(0xFB50, 0xFDFF + 1)) | set(range(0xFE70, 0xFEFF + 1))
 
 
@@ -31,13 +35,18 @@ def _rtl_word(w: str) -> bool:
 
 
 def _reshape_persian(text: str) -> str:
-    """Reshape + reorder Persian text for LTR Pillow rendering (no raqm / bidi).
+    """Reshape + reorder Persian text for LTR Pillow rendering (no raqm / bidi C ext needed).
 
     1. arabic_reshaper connects characters (initial/medial/final forms).
     2. The word order is reversed (RTL text appears right-to-left, so
        for LTR rendering the words must come in reverse order).
     3. Each RTL word is internally reversed for correct LTR glyph order.
     """
+    # When RAQM (HarfBuzz) is available, Pillow shapes Persian natively.
+    # Manual arabic_reshaper + reversal would produce presentation forms that
+    # HarfBuzz then tries to re-shape, creating garbage. Just pass through.
+    if _HAS_RAQM:
+        return text
     if not text:
         return text
     try:
