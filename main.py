@@ -673,7 +673,8 @@ def _record_snapshot_sent(image_path: str):
 
 def _auto_reset_force_snapshot():
     """After snapshot successfully sent, flip FORCE_SNAPSHOT back to false in main.env."""
-    env_path = os.path.join(os.path.dirname(__file__), "main.env")
+    # Use CWD (app directory) — __file__ resolves to PyInstaller temp dir in EXE mode
+    env_path = os.path.join(os.getcwd(), "main.env")
     try:
         with open(env_path) as f:
             lines = f.readlines()
