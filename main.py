@@ -632,7 +632,8 @@ def _page_events_all_passed(page_rows: list) -> bool:
     """Return True if every event on *page_rows* has already happened (event_time in past)."""
     now = datetime.now(timezone.utc)
     for row in page_rows:
-        if row["ev_dt"] is not None and row["ev_dt"] > now:
+        # row is a datetime object (not a dict) — loaded from JSON snapshot
+        if row is not None and row > now:
             return False
     return True
 
