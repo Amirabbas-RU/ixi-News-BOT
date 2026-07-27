@@ -329,8 +329,10 @@ def _render_image(rows: list[dict], output_path: str, page_num: int = 1, total_p
         x -= tw
         label_bbox = font_header.getbbox(reshaped_label)
         label_w = label_bbox[2] - label_bbox[0]
-        # right-align
-        draw.text((x + tw - label_w - 4, y + 16), reshaped_label, fill=ACCENT_VIOLET, font=font_header)
+        right_margin = 4
+        if col == "status":
+            right_margin = 18  # push "ردیف" slightly left
+        draw.text((x + tw - label_w - right_margin, y + 16), reshaped_label, fill=ACCENT_VIOLET, font=font_header)
         x -= 2
 
     # ── separator ────────────────────────────────────────────────
@@ -362,10 +364,10 @@ def _render_image(rows: list[dict], output_path: str, page_num: int = 1, total_p
                 text_w = bbox[2] - bbox[0]
                 draw.text((x + tw - text_w - 4, row_y + 14), reshaped_val, fill=_impact_color(orig_impact), font=font_cell)
             elif col == "status":
-                # row number — flush left within the cell
+                # row number — centered in the column
                 bbox = font_cell.getbbox(val)
                 text_w = bbox[2] - bbox[0]
-                draw.text((x + 4, row_y + 14), val, fill=TEXT_SECONDARY, font=font_cell)
+                draw.text((x + (tw - text_w) // 2, row_y + 14), val, fill=TEXT_SECONDARY, font=font_cell)
             elif col == "title":
                 reshaped_val = _reshape_persian(val)
                 truncated = _truncate(reshaped_val, font_cell, tw - 8)
