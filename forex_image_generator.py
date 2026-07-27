@@ -429,6 +429,16 @@ def generate_forex_images(
     if events is None:
         return []
 
+    # ── filter by impact level (FOREX_ALERT_IMPACTS env var) ──────
+    impacts_env = os.getenv("FOREX_ALERT_IMPACTS", "High,Medium,Low")
+    allowed_impacts = {x.strip() for x in impacts_env.split(",") if x.strip()}
+    if allowed_impacts:
+        filtered = [ev for ev in events if ev["impact"] in allowed_impacts]
+        skipped = len(events) - len(filtered)
+        if skipped:
+            print(f"[INFO] Impact filter: kept {len(filtered)} / {len(events)} events (allowed={allowed_impacts})")
+        events = filtered
+
     now_dt = datetime.now().astimezone()
 
     # ── prepare rows ─────────────────────────────────────────────
