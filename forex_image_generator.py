@@ -470,6 +470,9 @@ def generate_forex_images(
             "time":     ev_tehran.strftime("%H:%M").translate(_TRANS_DIGITS),
         })
 
+    # sort by actual datetime (event_time text column is AM/PM string that sorts lexicographically wrong)
+    all_rows.sort(key=lambda r: r["ev_dt"])
+
     if not all_rows:
         print("[INFO] No pending forex events to render.")
         return []
