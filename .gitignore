@@ -10,9 +10,12 @@ __pycache__/
 
 # Database & cache files
 news_storage.db
+*.db-shm
+*.db-wal
 forex_cache.json
 forex_events_snapshot.png
 bot.lock
+.snapshot_*.json
 
 # Build artifacts
 *.exe
