@@ -4,6 +4,7 @@ import init_database
 import os
 import time
 import telebot
+import requests as _req
 import sqlite3
 from logger import logger, green
 import re
@@ -252,6 +253,7 @@ def send_with_retry(
                     caption=content,
                     parse_mode="MarkdownV2",
                     reply_to_message_id=reply_to_message_id,
+                    timeout=20,
                 )
             else:
                 bot.send_message(
@@ -259,6 +261,7 @@ def send_with_retry(
                     text=content,
                     parse_mode="MarkdownV2",
                     reply_to_message_id=reply_to_message_id,
+                    timeout=20,
                 )
 
             logger.info(green(f"Message sent successfully (attempt {attempt + 1})"))
@@ -392,7 +395,8 @@ def send_forex_message(text: str) -> int | None:
     for attempt in range(3):
         try:
             msg = my_bot.send_message(
-                chat_id=TELEGRAM_CHANNEL_ID, text=text, parse_mode="MarkdownV2"
+                chat_id=TELEGRAM_CHANNEL_ID, text=text, parse_mode="MarkdownV2",
+                timeout=20,
             )
             logger.info(green("Forex alert sent successfully"))
             return msg.message_id
@@ -779,6 +783,7 @@ def check_and_send_daily_snapshot():
                     chat_id=TELEGRAM_CHANNEL_ID,
                     photo=img_file,
                     caption=caption,
+                    timeout=20,
                 )
             logger.info(green(f"Sent snapshot page 1/{total_pages}"))
         except Exception as e:
@@ -838,6 +843,7 @@ def check_and_send_daily_snapshot():
                 chat_id=TELEGRAM_CHANNEL_ID,
                 photo=img_file,
                 caption=_build_snapshot_caption(now_utc),
+                timeout=20,
             )
         logger.info(green(f"Sent snapshot page {next_page}/{total_pages}"))
     except Exception as e:
@@ -1251,7 +1257,11 @@ if __name__ == "__main__":
     def job():
         try:
             logger.info("Starting scheduled news fetch...")
+            t0 = datetime.now()
             main()
+            elapsed = (datetime.now() - t0).total_seconds()
+            if elapsed > NEWS_UPDATE_INTERVAL_MINUTES * 60 * 0.8:
+                logger.warning(f"Cycle took {elapsed:.0f}s — close to {NEWS_UPDATE_INTERVAL_MINUTES}min interval")
             logger.info(green("Scheduled run completed."))
         except Exception as e:
             logger.exception(f"Error occurred in job: {e}")
@@ -1277,7 +1287,12 @@ if __name__ == "__main__":
 
     while True:
         try:
+            t0 = datetime.now()
             job()
+            elapsed = (datetime.now() - t0).total_seconds()
+            if elapsed >= NEWS_UPDATE_INTERVAL_MINUTES * 60:
+                logger.warning(f"Cycle took {elapsed:.0f}s (exceeded interval) — running next cycle without delay")
+                continue  # skip sleep, run immediately
             delay = _next_aligned_seconds()
             if delay == 0:
                 delay = NEWS_UPDATE_INTERVAL_MINUTES * 60

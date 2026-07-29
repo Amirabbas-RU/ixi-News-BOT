@@ -18,6 +18,20 @@ import arabic_reshaper
 #    Skip manual arabic_reshaper + reversal to avoid double-shaping garbage.
 _HAS_RAQM = features.check("raqm")
 
+# ── External time source (worldtimeapi.org) — avoids depending on wrong system clock ──
+import requests as _requests
+
+def _get_tehran_now() -> datetime:
+    """Get current Tehran time from external API. Falls back to system clock on failure."""
+    try:
+        r = _requests.get(
+            "http://worldtimeapi.org/api/timezone/Asia/Tehran", timeout=5
+        )
+        dt = datetime.fromisoformat(r.json()["datetime"])
+        return dt.astimezone(TEHRAN_TZ) if dt.tzinfo else dt.replace(tzinfo=TEHRAN_TZ)
+    except Exception:
+        return datetime.now(TEHRAN_TZ)
+
 # ── Persian text reshaping (only when RAQM is unavailable) ───────────
 _PERSIAN_RANGE = set(range(0x0590, 0x08FF + 1)) | set(range(0xFB50, 0xFDFF + 1)) | set(range(0xFE70, 0xFEFF + 1))
 
@@ -391,9 +405,16 @@ def _render_image(rows: list[dict], output_path: str, page_num: int = 1, total_p
     # ── footer (Persian) ─────────────────────────────────────────
     footer_y = y + len(rows) * ROW_HEIGHT + 8
     tehran_now = now_dt.astimezone(TEHRAN_TZ)
-    today_str_fa = _format_date_fa(tehran_now.strftime("%m-%d-%Y"))
-    footer_text = f"🗓 {today_str_fa}  |  به وقت تهران  |  @ForexEyvazi"
-    draw.text((PADDING_X + 12, footer_y), _reshape_persian(footer_text), fill=TEXT_SECONDARY, font=font_footer)
+    today_str = tehran_now.strftime("%Y/%m/%d")
+    footer_text = f"🗓 {today_str}  |  به وقت تهران  |  @ForexEyvazi"
+    # Apply _reshape_persian ONLY on the Persian segment, not the whole mixed-LTR/RTL footer
+    # to avoid word-reversal mangling the date and @handle positions.
+    if _HAS_RAQM:
+        draw.text((PADDING_X + 12, footer_y), footer_text, fill=TEXT_SECONDARY, font=font_footer)
+    else:
+        pfx, sfx = footer_text.split("به وقت تهران")
+        rtl_reshaped = _reshape_persian("به وقت تهران")
+        draw.text((PADDING_X + 12, footer_y), f"{pfx}{rtl_reshaped}{sfx}", fill=TEXT_SECONDARY, font=font_footer)
 
     # ── outer border ─────────────────────────────────────────────
     draw.rectangle(
@@ -464,7 +485,7 @@ def generate_forex_images(
         ev_tehran = ev_dt.astimezone(TEHRAN_TZ)
 
         # only show upcoming events (not yet passed in Tehran time)
-        if ev_dt.astimezone(TEHRAN_TZ) < datetime.now(TEHRAN_TZ):
+        if ev_dt.astimezone(TEHRAN_TZ) < _get_tehran_now():
             continue
 
         all_rows.append({

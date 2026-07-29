@@ -7,7 +7,7 @@ import config
 client = OpenAI(
     api_key=config.OPENROUTER_API_KEY,
     base_url=config.OPENROUTER_BASE_URL,
-    timeout=6
+    timeout=30
 )
 
 
@@ -163,7 +163,7 @@ def summarize_forex_event_fa(event: dict) -> str:
         return text
     except Exception as e:
         logger.error(f"Forex event analysis error: {e}")
-        impact_map = {"High": "پر影响", "Medium": "متوسط", "Low": "کم"}
+        impact_map = {"High": "پرنفوذ", "Medium": "متوسط", "Low": "کم"}
         impact_fa = impact_map.get(event.get("impact", ""), "")
         return (
             f"⚠️ رویداد اقتصادی: {event['title']} | "
