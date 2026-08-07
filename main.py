@@ -868,6 +868,18 @@ def _build_date_caption(now_utc: datetime) -> str:
     return f"📅 تقویم اقتصادی {wd} {day} {month_en}"
 
 
+
+def _wsafe(text: str, max_chars: int) -> str:
+    """Truncate at the last word boundary before max_chars (never mid-word)."""
+    if not text or len(text) <= max_chars:
+        return text
+    cut = text[:max_chars]
+    idx = cut.rfind(" ")
+    if 0 < idx > max_chars * 0.6:
+        cut = cut[:idx]
+    return cut.rstrip() + "…"
+
+
 def _build_snapshot_caption(now_utc: datetime) -> str | None:
     """Build the Persian caption for snapshot images — AI analysis or fallback date line."""
     date_header = _build_date_caption(now_utc)
@@ -888,18 +900,20 @@ def _build_snapshot_caption(now_utc: datetime) -> str | None:
                         first_ev = event_idx[0]
                         prefix = lines[:first_ev]
                         body = lines[first_ev:]
-                        budget = 940
+                        budget = 900
 
                         def _cap_len():
                             return len("\n".join(prefix)) + 1 + len("\n".join(body))
 
-                        # 1) shorten the longest 🔹 analysis line until it fits
+                        # 1) shorten the longest 🔹 analysis line until it fits.
+                        #    Only trim lines over 100 chars, and never below 100 —
+                        #    keeps analyses readable instead of chopping at 45.
                         while _cap_len() > budget:
-                            cands = [i for i, l in enumerate(body) if l.startswith("🔹") and len(l) > 35]
+                            cands = [i for i, l in enumerate(body) if l.startswith("🔹") and len(l) > 100]
                             if not cands:
                                 break
                             i = max(cands, key=lambda i: len(body[i]))
-                            body[i] = body[i][:45].rstrip() + "…"
+                            body[i] = body[i][:97].rstrip() + "…"
                         # 2) last resort — drop tail lines that are NOT event blocks
                         while _cap_len() > budget and len(body) > 0:
                             last_idx = event_idx[-1] - first_ev
@@ -907,6 +921,10 @@ def _build_snapshot_caption(now_utc: datetime) -> str | None:
                                 break  # would eat into the last event
                             body = body[:-1]
                         ai_caption = "\n".join(prefix) + "\n" + "\n".join(body)
+                        # Hard safety cap — Telegram limit is 1024 for captions;
+                        # footer + MarkdownV2 escaping add ~70 chars.
+                        if len(ai_caption) > 930:
+                            ai_caption = _wsafe(ai_caption, 930)
                         logger.warning(
                             f"Caption fit-to-budget: {len(ai_caption)} chars, "
                             f"{len(event_idx)} event blocks kept"
