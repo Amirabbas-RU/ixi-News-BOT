@@ -878,22 +878,39 @@ def _build_snapshot_caption(now_utc: datetime) -> str | None:
             logger.info(f"Generating AI snapshot caption for {len(today_events)} events...")
             ai_caption = generate_daily_calendar_caption(today_events, date_header)
             if ai_caption:
-                # Telegram caption limit is 1024 chars — keep max complete events that fit
+                # Telegram caption limit is 1024 chars — NEVER drop an event block.
+                # If over budget, shorten analysis (🔹) lines first; only as a last
+                # resort trim the tail (warning section) — events are sacred.
                 if len(ai_caption) > 950:
-                    # Find all 📣 event-block start positions
-                    positions = [i for i, ch in enumerate(ai_caption) if ch == "📣" and (i == 0 or ai_caption[i-1] != "📣")]
-                    # Keep everything before the first 📣 that starts past position 900
-                    last_good = 0
-                    for pos in positions:
-                        if pos < 900:
-                            last_good = pos
-                        else:
-                            break
-                    if last_good > 500:
-                        ai_caption = ai_caption[:last_good].rstrip()
-                        logger.warning(f"Caption truncated: kept {sum(1 for p in positions if p < 900)}/{len(positions)} events, {len(ai_caption)} chars")
-                    else:
-                        ai_caption = ai_caption[:947]
+                    lines = ai_caption.split("\n")
+                    event_idx = [i for i, l in enumerate(lines) if l.startswith("📣")]
+                    if event_idx:
+                        first_ev = event_idx[0]
+                        prefix = lines[:first_ev]
+                        body = lines[first_ev:]
+                        budget = 940
+
+                        def _cap_len():
+                            return len("\n".join(prefix)) + 1 + len("\n".join(body))
+
+                        # 1) shorten the longest 🔹 analysis line until it fits
+                        while _cap_len() > budget:
+                            cands = [i for i, l in enumerate(body) if l.startswith("🔹") and len(l) > 35]
+                            if not cands:
+                                break
+                            i = max(cands, key=lambda i: len(body[i]))
+                            body[i] = body[i][:45].rstrip() + "…"
+                        # 2) last resort — drop tail lines that are NOT event blocks
+                        while _cap_len() > budget and len(body) > 0:
+                            last_idx = event_idx[-1] - first_ev
+                            if len(body) <= last_idx + 3:
+                                break  # would eat into the last event
+                            body = body[:-1]
+                        ai_caption = "\n".join(prefix) + "\n" + "\n".join(body)
+                        logger.warning(
+                            f"Caption fit-to-budget: {len(ai_caption)} chars, "
+                            f"{len(event_idx)} event blocks kept"
+                        )
                 # Append date footer + channel tag (MarkdownV2-escaped since send_photo uses MarkdownV2)
                 ai_caption = escape_markdown_v2(ai_caption)
                 ai_caption += (
