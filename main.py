@@ -1327,13 +1327,24 @@ if __name__ == "__main__":
             if idle > WATCHDOG_MAX_SECONDS:
                 logger.critical(
                     f"WATCHDOG: no activity for {idle:.0f}s — bot hung. "
-                    f"Force-restarting now."
+                    f"Restarting now."
                 )
                 try:
                     _remove_lock()
                 except Exception:
                     pass
-                os.execv(sys.executable, [sys.executable] + sys.argv[1:])
+                # os.execv is unreliable under PyInstaller on Windows.
+                # Spawn a fresh copy of ourselves, then exit this process.
+                try:
+                    import subprocess
+                    subprocess.Popen(
+                        [sys.executable] + sys.argv,
+                        cwd=os.getcwd(),
+                        creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
+                    )
+                except Exception as e:
+                    logger.critical(f"WATCHDOG restart spawn failed: {e}")
+                os._exit(3)
 
     _watchdog_thread = threading.Thread(target=_watchdog_loop, daemon=True)
     _watchdog_thread.start()
