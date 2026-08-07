@@ -16,7 +16,7 @@ import atexit
 from sources_cnbc import CNBCRSS
 from sources_yahoo import YahooRSS
 
-from openrouter_summarizer import summarize_news_fa, summarize_forex_event_fa, translate_title_fa
+from openrouter_summarizer import summarize_news_fa, summarize_forex_event_fa, translate_title_fa, generate_daily_calendar_caption
 from sources_forexfactory import ForexFactoryCalendar
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -243,10 +243,11 @@ def send_with_retry(
     bot, chat_id, content, image_url=None, max_retries=3, reply_to_message_id=None
 ):
     retry_delays = [2, 5, 10]
+    use_image = bool(image_url)
 
     for attempt in range(max_retries):
         try:
-            if image_url:
+            if use_image:
                 bot.send_photo(
                     chat_id=chat_id,
                     photo=image_url,
@@ -268,7 +269,21 @@ def send_with_retry(
             return True
 
         except Exception as e:
+            msg = str(e)
             logger.warning(f"Send attempt {attempt + 1} failed: {e}")
+
+            # Bad image URL (400 "wrong type of the web page content" / invalid)
+            # will NEVER succeed on retry — drop the image and send text-only now.
+            if use_image and (
+                "wrong type of the web page content" in msg
+                or "PHOTO_INVALID_DIMENSIONS" in msg
+                or "wrong file identifier" in msg
+                or "Bad Request: wrong" in msg
+                or "IMAGE_PROCESS_FAILED" in msg
+            ):
+                logger.warning("Bad image URL detected — falling back to text-only send")
+                use_image = False
+                continue  # retry immediately as text, don't sleep
 
             if attempt < max_retries - 1:
                 delay = retry_delays[attempt] if attempt < len(retry_delays) else 10
@@ -383,12 +398,20 @@ def update_forex_analysis(event_id: int, analysis: str):
 
 
 def parse_forex_datetime(date_str: str, time_str: str) -> datetime | None:
-    try:
-        naive = datetime.strptime(f"{date_str} {time_str}", "%m-%d-%Y %I:%M%p")
-        return naive.replace(tzinfo=CALENDAR_TZ)
-    except Exception as e:
-        logger.warning(f"Parse forex datetime failed: {date_str} {time_str} - {e}")
-        return None
+    """Parse ForexFactory date + time into timezone-aware datetime.
+
+    Tries 12-hour (%I:%M%p) first (e.g. '08-03-2026 3:30pm'),
+    then 24-hour (%H:%M) fallback (e.g. '08-03-2026 15:30').
+    """
+    formats = ["%m-%d-%Y %I:%M%p", "%m-%d-%Y %H:%M"]
+    for fmt in formats:
+        try:
+            naive = datetime.strptime(f"{date_str} {time_str}", fmt)
+            return naive.replace(tzinfo=CALENDAR_TZ)
+        except ValueError:
+            continue
+    logger.warning(f"Parse forex datetime failed: {date_str} {time_str}")
+    return None
 
 
 def send_forex_message(text: str) -> int | None:
@@ -494,16 +517,27 @@ def forex_event_to_news_item(ev: dict) -> dict:
 
 
 def _print_forex_table(pending: list[dict], now_dt: datetime):
+    tehran_tz = ZoneInfo("Asia/Tehran")
+    today_tehran = datetime.now(tehran_tz).date()
+
     lines = []
     sep = "─" * 106
-    lines.append(f"── ForexFactory Pending Events ({len(pending)}) {'─' * 52}")
-    header = f"{'S':<3} {'Impact':<10} {'Country':<10} {'Title':<50} {'Date':<15} {'Time':<10} {'In':<8}"
-    lines.append(header)
-    lines.append("─" * 106)
+
+    # Filter to today's events only (Tehran timezone)
+    today_pending = []
     for ev in pending:
         ev_dt = parse_forex_datetime(ev["event_date"], ev["event_time"])
         if ev_dt is None:
             continue
+        if ev_dt.astimezone(tehran_tz).date() == today_tehran:
+            today_pending.append(ev)
+
+    lines.append(f"── ForexFactory Today's Events ({len(today_pending)}) {'─' * 52}")
+    header = f"{'S':<3} {'Impact':<10} {'Country':<10} {'Title':<50} {'Date':<15} {'Time':<10} {'In':<8}"
+    lines.append(header)
+    lines.append("─" * 106)
+    for ev in today_pending:
+        ev_dt = parse_forex_datetime(ev["event_date"], ev["event_time"])
         mins = (ev_dt - now_dt).total_seconds() / 60.0
         in_str = f"{mins:+.0f}m" if abs(mins) < 10000 else f"{mins / 60:+.0f}h"
         title = ev["title"][:48]
@@ -587,8 +621,8 @@ def check_forex_calendar():
                 f"\n"
                 f"🚦 {escape_markdown_v2(ev['country'])} {impact_emoji} {impact_label}\n"
                 f"\n"
-                f"🗓 {escape_markdown_v2(title_line)}{extra}"
-                f"\n\n💠💠 ||@ForexEyvazi|| 💠💠"
+                f"🗓 {escape_markdown_v2(title_line)}{extra}\n\n"
+                f"💎💎 ||@ForexEyvazi|| 💎💎"
             )
             msg_id = send_forex_message(text)
             if msg_id is not None:
@@ -617,37 +651,10 @@ def check_forex_calendar():
 
 # ---------------------------------<< Daily Snapshot Image >>---------------------------------
 
-_SNAPSHOT_PROGRESS_PATH = os.path.join(os.getcwd(), ".snapshot_progress.json")
-
-
-def _snapshot_progress() -> dict:
-    """Load the JSON-based snapshot page tracker.  Returns {date_str: {page, total_pages, done}}."""
-    try:
-        with open(_SNAPSHOT_PROGRESS_PATH) as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
-
-
-def _save_snapshot_progress(prog: dict):
-    with open(_SNAPSHOT_PROGRESS_PATH, "w") as f:
-        json.dump(prog, f, indent=2)
-
-
-def _page_events_all_passed(page_rows: list) -> bool:
-    """Return True if every event on *page_rows* has already happened (event_time in past)."""
-    now = datetime.now(timezone.utc)
-    for row in page_rows:
-        # row is a datetime object (not a dict) — loaded from JSON snapshot
-        if row is not None and row > now:
-            return False
-    return True
-
-
 def _snapshot_already_sent_today() -> bool:
-    """Check if a daily snapshot has already been sent today (UTC date)."""
+    """Check if a daily snapshot has already been sent today (Tehran date)."""
     try:
-        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today_str = datetime.now(ZoneInfo("Asia/Tehran")).strftime("%Y-%m-%d")
         cursor = db_conn.cursor()
         cursor.execute(
             "SELECT 1 FROM daily_snapshots WHERE snapshot_date = ?", (today_str,)
@@ -659,9 +666,9 @@ def _snapshot_already_sent_today() -> bool:
 
 
 def _record_snapshot_sent(image_path: str):
-    """Record that a daily snapshot was sent today."""
+    """Record that a daily snapshot was sent today (Tehran date)."""
     try:
-        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today_str = datetime.now(ZoneInfo("Asia/Tehran")).strftime("%Y-%m-%d")
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         db_conn.execute(
             "INSERT OR IGNORE INTO daily_snapshots (snapshot_date, image_path, sent_at) "
@@ -702,16 +709,11 @@ def _auto_reset_force_snapshot():
 
 
 def check_and_send_daily_snapshot():
-    """Generate and send the daily forex events snapshot image — one page per cycle.
-
-    - Page 1 is sent at the configured time (15:05 Tehran).
-    - Subsequent pages are sent only when ALL events on the previous page have passed.
-    - When the last page is sent, the day is marked complete.
-    """
+    """Generate and send the daily forex events snapshot image — single image per day."""
     if not FOREX_IMAGE_SEND:
         return
 
-    # parse target time (UTC)
+    # parse target time
     try:
         target_h, target_m = map(int, FOREX_IMAGE_SEND_TIME.strip().split(":"))
     except (ValueError, AttributeError):
@@ -734,133 +736,110 @@ def check_and_send_daily_snapshot():
         logger.info(f"Snapshot: not yet {FOREX_IMAGE_SEND_TIME} Tehran, waiting")
         return
 
-    today_str = now_utc.strftime("%Y-%m-%d")
-    prog = _snapshot_progress()
-    today_prog = prog.get(today_str, {"page": 0, "total_pages": 1, "done": False})
+    # Already sent today?
+    if _snapshot_already_sent_today() and not FORCE_SNAPSHOT:
+        return
 
-    # Already done for today?
-    if today_prog.get("done"):
-        if FORCE_SNAPSHOT:
-            logger.info("FORCE_SNAPSHOT=True — regenerating despite progress file")
-            # reset prog so page==0 logic runs
-            today_prog = {"page": 0, "total_pages": 1, "done": False}
-            prog[today_str] = today_prog
-        else:
-            return
+    if FORCE_SNAPSHOT:
+        logger.info("FORCE_SNAPSHOT=True — regenerating despite already-sent check")
+
+    # Pre-translate any today's events missing title_fa and persist to DB,
+    # so BOTH the image (title_fa or title) and the AI caption render Persian.
+    try:
+        events_missing_fa = [
+            ev for ev in _get_today_calendar_events()
+            if not ev.get("title_fa")
+        ]
+        if events_missing_fa:
+            logger.info(f"Pre-translating {len(events_missing_fa)} event titles for snapshot...")
+            for ev in events_missing_fa:
+                fa = translate_title_fa(ev["title"])
+                if fa:
+                    try:
+                        db_conn.execute(
+                            "UPDATE forex_events SET title_fa = ? WHERE id = ?",
+                            (fa, ev["id"]),
+                        )
+                        db_conn.commit()
+                    except Exception:
+                        db_conn.rollback()
+    except Exception as e:
+        logger.error(f"Pre-translation pass failed (continuing anyway): {e}")
 
     from forex_image_generator import generate_forex_images
 
-    if today_prog["page"] == 0:
-        # ── First run today: generate page 1 ─────────────────────
-        logger.info("Generating page 1 of daily snapshot...")
-
-        image_paths = generate_forex_images(page_number=1)
-        if not image_paths:
-            logger.warning("No snapshot image generated (no events or error)")
-            return
-
-        # We need to know total pages - generate ALL to count, discard extras
-        all_paths = generate_forex_images()
-        total_pages = len(all_paths)
-        # clean up extra generated files
-        for p in all_paths:
-            if p != image_paths[0] and os.path.exists(p):
-                try:
-                    os.remove(p)
-                except OSError:
-                    pass
-        if total_pages == 0:
-            total_pages = 1
-
-        # Store row datetimes for pass-check (re-read from the fresh gen)
-        _store_today_event_dts(now_utc)
-
-        # Build caption and send
-        caption = _build_snapshot_caption(now_utc)
-        try:
-            with open(image_paths[0], "rb") as img_file:
-                my_bot.send_photo(
-                    chat_id=TELEGRAM_CHANNEL_ID,
-                    photo=img_file,
-                    caption=caption,
-                    timeout=20,
-                )
-            logger.info(green(f"Sent snapshot page 1/{total_pages}"))
-        except Exception as e:
-            logger.error(f"Failed to send snapshot page 1: {e}")
-            return
-
-        # Store progress (page=1 means "page 1 has been sent")
-        today_prog["page"] = 1
-        today_prog["total_pages"] = total_pages
-        today_prog["done"] = total_pages == 1  # mark done if only 1 page
-        prog[today_str] = today_prog
-        _save_snapshot_progress(prog)
-        if today_prog["done"]:
-            _auto_reset_force_snapshot()
-
-        if total_pages == 1:
-            _record_snapshot_sent(image_paths[0])
-        return
-
-    # ── Subsequent pages: check if current page's events have all passed ──
-    current_page = today_prog["page"]
-    total_pages = today_prog["total_pages"]
-
-    logger.info(f"Snapshot progress: page {current_page}/{total_pages} sent")
-
-    if current_page >= total_pages:
-        today_prog["done"] = True
-        prog[today_str] = today_prog
-        _save_snapshot_progress(prog)
-        _auto_reset_force_snapshot()
-        _record_snapshot_sent("(progressive)")
-        logger.info(green("All snapshot pages sent for today"))
-        return
-
-    # Check if ALL events on current page have passed
-    last_page_rows = _load_page_event_dts(now_utc, current_page - 1)  # 0-based index
-    if last_page_rows is not None and not _page_events_all_passed(last_page_rows):
-        logger.info(f"Page {current_page} events still pending — waiting")
-        return
-
-    # All events on previous page have passed — send next page
-    next_page = current_page + 1
-    logger.info(f"Sending snapshot page {next_page}/{total_pages}...")
-
-    image_paths = generate_forex_images(page_number=next_page)
+    logger.info("Generating daily snapshot image...")
+    image_paths = generate_forex_images()
     if not image_paths:
-        logger.warning(f"Page {next_page} generated no image — marking done")
-        today_prog["done"] = True
-        prog[today_str] = today_prog
-        _save_snapshot_progress(prog)
-        _record_snapshot_sent("(progressive)")
+        logger.warning("No snapshot image generated (no events or error)")
         return
+
+    # Build caption and send
+    caption = _build_snapshot_caption(now_utc)
+    if not caption:
+        caption = escape_markdown_v2(_build_date_caption(now_utc)) + "\n💎💎 ||@ForexEyvazi|| 💎💎"
 
     try:
         with open(image_paths[0], "rb") as img_file:
             my_bot.send_photo(
                 chat_id=TELEGRAM_CHANNEL_ID,
                 photo=img_file,
-                caption=_build_snapshot_caption(now_utc),
+                caption=caption,
+                parse_mode="MarkdownV2",
                 timeout=20,
             )
-        logger.info(green(f"Sent snapshot page {next_page}/{total_pages}"))
+        logger.info(green("Daily snapshot sent"))
     except Exception as e:
-        logger.error(f"Failed to send snapshot page {next_page}: {e}")
+        logger.error(f"Failed to send snapshot: {e}")
         return
 
-    today_prog["page"] = next_page
-    if next_page >= total_pages:
-        today_prog["done"] = True
-        _record_snapshot_sent("(progressive)")
-        logger.info(green("All snapshot pages sent for today"))
-    prog[today_str] = today_prog
-    _save_snapshot_progress(prog)
+    _record_snapshot_sent(image_paths[0])
+    _auto_reset_force_snapshot()
 
 
-def _build_snapshot_caption(now_utc: datetime) -> str:
-    """Build the Persian calendar caption for snapshot images."""
+def _get_today_calendar_events() -> list[dict]:
+    """Fetch today's forex events from DB, filtered by Tehran calendar date.
+    Returns events with Tehran time string in 'event_time' key."""
+    tehran_tz = ZoneInfo("Asia/Tehran")
+    today_tehran = datetime.now(tehran_tz).date()
+
+    cols = [
+        "id", "title", "country", "event_date", "event_time", "impact",
+        "forecast", "previous", "url", "alert_pre_sent", "alert_15min_sent",
+        "alert_30min_sent", "result_sent", "news_inserted", "analysis",
+        "created_at", "title_fa", "alert_message_id",
+    ]
+    cursor = db_conn.cursor()
+    cursor.execute(
+        "SELECT id, title, country, event_date, event_time, impact, "
+        "forecast, previous, url, alert_pre_sent, alert_15min_sent, "
+        "alert_30min_sent, result_sent, news_inserted, analysis, "
+        "created_at, title_fa, alert_message_id "
+        "FROM forex_events "
+        "WHERE result_sent = 0 OR result_sent IS NULL "
+        "ORDER BY event_date, event_time"
+    )
+    rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
+
+    today_events = []
+    for ev in rows:
+        ev_dt = parse_forex_datetime(ev["event_date"], ev["event_time"])
+        if ev_dt is None:
+            continue
+        ev_tehran = ev_dt.astimezone(tehran_tz)
+        if ev_tehran.date() == today_tehran:
+            ev["event_time"] = ev_tehran.strftime("%H:%M")  # Tehran time string
+            today_events.append(ev)
+
+    today_events.sort(key=lambda e: (
+        parse_forex_datetime(e["event_date"], e["event_time"]) or datetime.min.replace(tzinfo=tehran_tz),
+        {"Low": 0, "Medium": 1, "High": 2}.get(e.get("impact", ""), 0)  # 🟡 before 🔴 at same time
+    ))
+    return today_events
+
+
+def _build_date_caption(now_utc: datetime) -> str:
+    """Build a short date-line caption for the snapshot image."""
     weekdays_fa = ["دوشنبه", "سه\u200cشنبه", "چهارشنبه", "پنجشنبه", "جمعه", "شنبه", "یکشنبه"]
     months_en_fa = {
         1: "ژانویه", 2: "فوریه", 3: "مارس", 4: "آوریل",
@@ -872,7 +851,6 @@ def _build_snapshot_caption(now_utc: datetime) -> str:
     day = tehran_dt.day
     month_en = months_en_fa[tehran_dt.month]
 
-    # Jalali (Shamsi) date
     try:
         import jdatetime
         jdate = jdatetime.date.fromgregorian(date=tehran_dt)
@@ -886,51 +864,49 @@ def _build_snapshot_caption(now_utc: datetime) -> str:
         jalali_str = ""
 
     if jalali_str:
-        return f"📅 تقویم اقتصادی {wd} {day} {month_en} | {jalali_str}\n💎💎 @ForexEyvazi 💎💎"
-    else:
-        return f"📅 تقویم اقتصادی {wd} {day} {month_en}\n💎💎 @ForexEyvazi 💎💎"
+        return f"📅 تقویم اقتصادی {wd} {day} {month_en} | {jalali_str}"
+    return f"📅 تقویم اقتصادی {wd} {day} {month_en}"
 
 
-# ── Snapshot page event-time tracker ──────────────────────────────────
-_SNAPSHOT_EVENTS_PATH = os.path.join(os.path.dirname(__file__), ".snapshot_events.json")
+def _build_snapshot_caption(now_utc: datetime) -> str | None:
+    """Build the Persian caption for snapshot images — AI analysis or fallback date line."""
+    date_header = _build_date_caption(now_utc)
 
-
-def _store_today_event_dts(now_utc: datetime):
-    """Store the event datetimes for today's snapshot (to check pass-conditions later)."""
-    from forex_image_generator import generate_forex_images, _parse_dt, _get_events, DB_PATH, CALENDAR_TIMEZONE
-    from zoneinfo import ZoneInfo
-    from datetime import datetime
-
-    events = _get_events(DB_PATH, CALENDAR_TIMEZONE)
-    if not events:
-        return
-    tz = ZoneInfo(CALENDAR_TIMEZONE)
-    rows = []
-    for ev in events:
-        ev_dt = _parse_dt(ev["event_date"], ev["event_time"], tz)
-        if ev_dt is not None:
-            rows.append(ev_dt.isoformat())
-    with open(_SNAPSHOT_EVENTS_PATH, "w") as f:
-        json.dump(rows, f)
-
-
-def _load_page_event_dts(now_utc: datetime, page_index: int) -> list | None:
-    """Load the event datetimes for a specific page (0-indexed)."""
-    max_rows = 20  # must match MAX_ROWS_PER_IMAGE in forex_image_generator
     try:
-        with open(_SNAPSHOT_EVENTS_PATH) as f:
-            all_dts = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return None
+        today_events = _get_today_calendar_events()
+        if today_events:
+            logger.info(f"Generating AI snapshot caption for {len(today_events)} events...")
+            ai_caption = generate_daily_calendar_caption(today_events, date_header)
+            if ai_caption:
+                # Telegram caption limit is 1024 chars — keep max complete events that fit
+                if len(ai_caption) > 950:
+                    # Find all 📣 event-block start positions
+                    positions = [i for i, ch in enumerate(ai_caption) if ch == "📣" and (i == 0 or ai_caption[i-1] != "📣")]
+                    # Keep everything before the first 📣 that starts past position 900
+                    last_good = 0
+                    for pos in positions:
+                        if pos < 900:
+                            last_good = pos
+                        else:
+                            break
+                    if last_good > 500:
+                        ai_caption = ai_caption[:last_good].rstrip()
+                        logger.warning(f"Caption truncated: kept {sum(1 for p in positions if p < 900)}/{len(positions)} events, {len(ai_caption)} chars")
+                    else:
+                        ai_caption = ai_caption[:947]
+                # Append date footer + channel tag (MarkdownV2-escaped since send_photo uses MarkdownV2)
+                ai_caption = escape_markdown_v2(ai_caption)
+                ai_caption += (
+                    f"\n\n{escape_markdown_v2(_build_date_caption(now_utc))}\n"
+                    f"💎💎 ||@ForexEyvazi|| 💎💎"
+                )
+                return ai_caption
+    except Exception as e:
+        import traceback
+        logger.error(f"AI caption failed: {e}")
+        logger.debug(traceback.format_exc())
 
-    start = page_index * max_rows
-    end = start + max_rows
-    page_dts = all_dts[start:end]
-    if not page_dts:
-        return None
-
-    from datetime import datetime
-    return [datetime.fromisoformat(d) for d in page_dts]
+    return None  # caller falls back to date line
 
 
 # ---------------------------------<< Main Function >>---------------------------------
@@ -1105,9 +1081,9 @@ def main():
 
                 safe_title = escape_markdown_v2(title_fa)
                 safe_summary = escape_markdown_v2(summary_fa)
-                diamond = "💠" if batch_label == "ForexFactory" else "💎"
                 message_text = (
-                    f"*{safe_title}*\n\n{safe_summary}\n\n{diamond}{diamond} ||@ForexEyvazi|| {diamond}{diamond}"
+                    f"*{safe_title}*\n\n{safe_summary}\n\n"
+                    f"💎💎 ||@ForexEyvazi|| 💎💎"
                 )
 
                 success = False
@@ -1254,16 +1230,50 @@ if __name__ == "__main__":
 
     logger.info(f"Bot started! Running every {NEWS_UPDATE_INTERVAL_MINUTES} minutes...")
 
+    # ---------------------------------<< Watchdog: self-heal on freeze >>---------------------------------
+    # If a cycle hangs forever (DNS stall, dead socket, feedparser edge case), the
+    # scheduler never returns and the bot looks frozen. Watchdog force-restarts the
+    # process after WATCHDOG_MAX_SECONDS of total inactivity.
+    WATCHDOG_MAX_SECONDS = max(15 * 60, NEWS_UPDATE_INTERVAL_MINUTES * 60 * 4)
+    _last_heartbeat = [time.time()]
+
+    def _heartbeat():
+        _last_heartbeat[0] = time.time()
+
+    def _watchdog_loop():
+        while True:
+            time.sleep(30)
+            idle = time.time() - _last_heartbeat[0]
+            if idle > WATCHDOG_MAX_SECONDS:
+                logger.critical(
+                    f"WATCHDOG: no activity for {idle:.0f}s — bot hung. "
+                    f"Force-restarting now."
+                )
+                try:
+                    _remove_lock()
+                except Exception:
+                    pass
+                os.execv(sys.executable, [sys.executable] + sys.argv[1:])
+
+    _watchdog_thread = threading.Thread(target=_watchdog_loop, daemon=True)
+    _watchdog_thread.start()
+    logger.info(
+        f"Watchdog armed (restart after {WATCHDOG_MAX_SECONDS}s inactivity)"
+    )
+
     def job():
         try:
+            _heartbeat()
             logger.info("Starting scheduled news fetch...")
             t0 = datetime.now()
             main()
             elapsed = (datetime.now() - t0).total_seconds()
+            _heartbeat()
             if elapsed > NEWS_UPDATE_INTERVAL_MINUTES * 60 * 0.8:
                 logger.warning(f"Cycle took {elapsed:.0f}s — close to {NEWS_UPDATE_INTERVAL_MINUTES}min interval")
             logger.info(green("Scheduled run completed."))
         except Exception as e:
+            _heartbeat()
             logger.exception(f"Error occurred in job: {e}")
 
     def _sleep_and_panel(seconds):

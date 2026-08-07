@@ -12,11 +12,15 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageDraw, ImageFont, features
-import arabic_reshaper
 
 # ── RAQM (HarfBuzz) available? If yes, Pillow handles Persian shaping natively.
 #    Skip manual arabic_reshaper + reversal to avoid double-shaping garbage.
 _HAS_RAQM = features.check("raqm")
+
+if _HAS_RAQM:
+    arabic_reshaper = None  # not needed — Pillow's HarfBuzz handles Persian natively
+else:
+    import arabic_reshaper
 
 # ── External time source (worldtimeapi.org) — avoids depending on wrong system clock ──
 import requests as _requests
@@ -154,7 +158,6 @@ ROW_HEIGHT = 56
 HEADER_HEIGHT = 60
 TITLE_HEIGHT = 72
 FOOTER_HEIGHT = 52
-MAX_ROWS_PER_IMAGE = 20          # rows per image (Telegram limit ~10000px high ~174 rows)
 
 COL_WIDTHS = {
     "status":   72,
@@ -442,14 +445,10 @@ def generate_forex_images(
     db_path: str = None,
     output_path: str = None,
     cal_tz: str = None,
-    max_rows: int = MAX_ROWS_PER_IMAGE,
-    page_number: int = 0,
 ) -> list[str]:
-    """Generate one or more dark-themed table images of pending ForexFactory events.
+    """Generate a single dark-themed table image of today's pending ForexFactory events.
 
-    When *page_number* is 0 (default), ALL pages are generated and returned.
-    When *page_number* > 0, only that specific page is rendered.
-    The header shows "Page X of N" on every page.
+    Returns a list with one path string, or empty list if no events.
     """
     if db_path is None:
         db_path = DB_PATH
@@ -473,7 +472,7 @@ def generate_forex_images(
             print(f"[INFO] Impact filter: kept {len(filtered)} / {len(events)} events (allowed={allowed_impacts})")
         events = filtered
 
-    now_dt = datetime.now().astimezone()
+    today_tehran = datetime.now(TEHRAN_TZ).date()
 
     # ── prepare rows ─────────────────────────────────────────────
     all_rows = []
@@ -484,8 +483,8 @@ def generate_forex_images(
 
         ev_tehran = ev_dt.astimezone(TEHRAN_TZ)
 
-        # only show upcoming events (not yet passed in Tehran time)
-        if ev_dt.astimezone(TEHRAN_TZ) < _get_tehran_now():
+        # only today's events (Tehran calendar date)
+        if ev_tehran.date() != today_tehran:
             continue
 
         all_rows.append({
@@ -498,46 +497,19 @@ def generate_forex_images(
             "time":     ev_tehran.strftime("%H:%M").translate(_TRANS_DIGITS),
         })
 
-    # sort by actual datetime (event_time text column is AM/PM string that sorts lexicographically wrong)
+    # sort by actual datetime
     all_rows.sort(key=lambda r: r["ev_dt"])
 
     if not all_rows:
         print("[INFO] No pending forex events to render.")
         return []
 
-    # ── split into pages ─────────────────────────────────────────
-    total_pages = (len(all_rows) + max_rows - 1) // max_rows
-    base, ext = os.path.splitext(output_path)
+    # ── single image — all today's events ────────────────────────
+    for i, row in enumerate(all_rows, 1):
+        row["status"] = str(i)
 
-    def _render_page(page: int) -> str | None:
-        start = page * max_rows
-        end = start + max_rows
-        chunk = all_rows[start:end]
-        if not chunk:
-            return None
-        # replace status with row number (1-based within this page)
-        for i, row in enumerate(chunk, 1):
-            row["status"] = str(i)
-        if total_pages > 1:
-            page_path = f"{base}_p{page + 1}{ext}"
-        else:
-            page_path = output_path
-        return _render_image(chunk, page_path, page_num=page + 1, total_pages=total_pages)
-
-    if page_number > 0:
-        idx = page_number - 1
-        if idx < 0 or idx >= total_pages:
-            print(f"[WARN] Page {page_number} requested but only {total_pages} pages exist.")
-            return []
-        result = _render_page(idx)
-        return [result] if result else []
-    else:
-        paths = []
-        for page in range(total_pages):
-            result = _render_page(page)
-            if result:
-                paths.append(result)
-        return paths
+    result = _render_image(all_rows, output_path, page_num=1, total_pages=1)
+    return [result] if result else []
 
 
 if __name__ == "__main__":

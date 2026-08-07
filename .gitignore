@@ -10,6 +10,7 @@ __pycache__/
 
 # Database & cache files
 news_storage.db
+translations.db
 *.db-shm
 *.db-wal
 forex_cache.json
