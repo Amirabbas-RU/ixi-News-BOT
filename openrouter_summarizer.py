@@ -328,8 +328,8 @@ def generate_daily_calendar_caption(
 [۱ خط]
 
 🚨 قوانین:
-- هر رویداد: فقط یک 🔹 و حداکثر یک خط تحلیل کوتاه و دقیق
-- 🔴: ۱-۲ خط. 🟡: ۱ خط
+- هر رویداد: فقط یک 🔹 و حداکثر ۲ خط تحلیل کوتاه و دقیق
+- 🔴: ۲ خط کوتاه. 🟡: ۱-۲ خط کوتاه
 - همه {len(important_events)} رویداد — یکی کم نشود
 - بدون توضیح اضافی. فقط متن ساده فارسی"""
 
@@ -342,7 +342,7 @@ def generate_daily_calendar_caption(
                 {"role": "user", "content": prompt},
             ],
             temperature=0.3,
-            max_tokens=max(1600, len(important_events) * 200 + 800),
+            max_tokens=max(2000, len(important_events) * 280 + 1000),
         )
         text = response.choices[0].message.content
         if not text or not text.strip():

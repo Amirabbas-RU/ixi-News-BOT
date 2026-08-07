@@ -890,9 +890,9 @@ def _build_snapshot_caption(now_utc: datetime) -> str | None:
             logger.info(f"Generating AI snapshot caption for {len(today_events)} events...")
             ai_caption = generate_daily_calendar_caption(today_events, date_header)
             if ai_caption:
-                # Telegram caption limit is 1024 chars — NEVER drop an event block.
-                # If over budget, shorten analysis (🔹) lines first; only as a last
-                # resort trim the tail (warning section) — events are sacred.
+                # Telegram caption limit is 1024 — event headers are sacred and
+                # NEVER dropped. Analysis text yields first (2 lines -> 1 -> none);
+                # only if even all headers can't fit do we drop the focus/warning prose.
                 if len(ai_caption) > 950:
                     lines = ai_caption.split("\n")
                     event_idx = [i for i, l in enumerate(lines) if l.startswith("📣")]
@@ -900,35 +900,80 @@ def _build_snapshot_caption(now_utc: datetime) -> str | None:
                         first_ev = event_idx[0]
                         prefix = lines[:first_ev]
                         body = lines[first_ev:]
-                        budget = 900
+                        budget = 985  # footer ~62 + escaping keep total < 1024, with slack
 
-                        def _cap_len():
-                            return len("\n".join(prefix)) + 1 + len("\n".join(body))
+                        # Split body into per-event chunks (each starts with 📣)
+                        chunks, cur = [], []
+                        for l in body:
+                            if l.startswith("📣"):
+                                if cur:
+                                    chunks.append(cur)
+                                cur = [l]
+                            else:
+                                cur.append(l)
+                        if cur:
+                            chunks.append(cur)
 
-                        # 1) shorten the longest 🔹 analysis line until it fits.
-                        #    Only trim lines over 100 chars, and never below 100 —
-                        #    keeps analyses readable instead of chopping at 45.
-                        while _cap_len() > budget:
-                            cands = [i for i, l in enumerate(body) if l.startswith("🔹") and len(l) > 100]
-                            if not cands:
+                        # Header lines = non-analysis (before first 🔹); analysis after
+                        def split_chunk(ch):
+                            for i, l in enumerate(ch):
+                                if l.startswith("🔹"):
+                                    return ch[:i], ch[i:]
+                            return ch, []
+
+                        headers, analyses = [], []
+                        for ch in chunks:
+                            h, a = split_chunk(ch)
+                            headers.append(h)
+                            analyses.append(a)
+
+                        # 1) always keep all headers: shrink each header's 2nd/3rd
+                        #    line lengths but never drop the 📣 line itself
+                        # 2) budget-aware: shorten analysis lines, then drop analysis
+                        #    lines event by event (keep headers)
+                        def total_len():
+                            return len("\n".join(prefix)) + sum(
+                                1 + len("\n".join(headers[i])) + (1 + len("\n".join(a)) if a else 0)
+                                for i, a in enumerate(analyses)
+                            )
+
+                        # shorten longest analysis line repeatedly
+                        while total_len() > budget:
+                            best = None  # (event_idx, line_idx, line)
+                            for i, a in enumerate(analyses):
+                                for j, l in enumerate(a):
+                                    if len(l) > 40 and (best is None or len(l) > best[2]):
+                                        best = (i, j, len(l))
+                            if best is None:
                                 break
-                            i = max(cands, key=lambda i: len(body[i]))
-                            body[i] = body[i][:97].rstrip() + "…"
-                        # 2) last resort — drop tail lines that are NOT event blocks
-                        while _cap_len() > budget and len(body) > 0:
-                            last_idx = event_idx[-1] - first_ev
-                            if len(body) <= last_idx + 3:
-                                break  # would eat into the last event
-                            body = body[:-1]
-                        ai_caption = "\n".join(prefix) + "\n" + "\n".join(body)
-                        # Hard safety cap — Telegram limit is 1024 for captions;
-                        # footer + MarkdownV2 escaping add ~70 chars.
-                        if len(ai_caption) > 930:
-                            ai_caption = _wsafe(ai_caption, 930)
+                            ei_, ji, ln = best
+                            analyses[ei_][ji] = analyses[ei_][ji][:39].rstrip() + "…"
+
+                        # drop analysis lines (or whole analysis) if still over
+                        guard = 0
+                        while total_len() > budget and guard < 500:
+                            guard += 1
+                            # remove the LAST analysis line over all events
+                            nonempty = [i for i, a in enumerate(analyses) if a]
+                            if not nonempty:
+                                break
+                            # drop the last line of the event with the most analysis lines
+                            target = max(nonempty, key=lambda i: len(analyses[i]))
+                            analyses[target].pop(-1)
+
+                        # rebuild
+                        rebuilt = "\n".join(prefix)
+                        for i, ch in enumerate(chunks):
+                            rebuilt += "\n" + "\n".join(headers[i])
+                            if analyses[i]:
+                                rebuilt += "\n" + "\n".join(analyses[i])
+                        ai_caption = rebuilt
                         logger.warning(
                             f"Caption fit-to-budget: {len(ai_caption)} chars, "
-                            f"{len(event_idx)} event blocks kept"
+                            f"{len(headers)} event blocks kept, "
+                            f"analyses: {[len(a) for a in analyses]}"
                         )
+
                 # Append date footer + channel tag (MarkdownV2-escaped since send_photo uses MarkdownV2)
                 ai_caption = escape_markdown_v2(ai_caption)
                 ai_caption += (
