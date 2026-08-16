@@ -1,3 +1,6 @@
+import re
+import unicodedata
+
 from logger import logger
 from openai import OpenAI
 import config
@@ -13,6 +16,20 @@ client = OpenAI(
 
 title_cache: dict[str, str] = {}
 
+
+def _attempt_models(primary: str) -> list[str]:
+    """Per-attempt model chain: 3x primary, then 2x spare (when configured).
+
+    The spare model (OPENROUTER_SPARE_MODEL) only runs AFTER the primary has
+    failed its full retry budget — success paths never touch it.
+    """
+    chain = [primary]
+    spare = (getattr(config, "OPENROUTER_SPARE_MODEL", None) or "").strip()
+    if spare and spare not in chain:
+        chain.append(spare)
+    return [m for m, n in zip(chain, (3, 2)) for _ in range(n)]
+
+
 def translate_title_fa(title: str) -> str | None:
     if title in title_cache:
         return title_cache[title]
@@ -27,11 +44,13 @@ def translate_title_fa(title: str) -> str | None:
     prompt = f"فقط عنوان را به فارسی روان ترجمه کن و هیچ چیز دیگر:\n\n{title}"
 
     # Retry transient OpenRouter failures (timeout / rate limit) so caption
-    # generation doesn't fall back to raw English titles.
-    for attempt in range(3):
+    # generation doesn't fall back to raw English titles. If the primary
+    # model exhausts its retries, fall back to OPENROUTER_SPARE_MODEL.
+    models = _attempt_models(config.OPENROUTER_MODEL)
+    for attempt, model in enumerate(models):
         try:
             response = client.chat.completions.create(
-                model=config.OPENROUTER_MODEL,
+                model=model,
                 messages=[
                     {"role": "system", "content": "فقط عنوان را به فارسی ترجمه کن و هیچ چیز دیگر ننویس."},
                     {"role": "user", "content": prompt}
@@ -49,8 +68,8 @@ def translate_title_fa(title: str) -> str | None:
                 _save_translation(title, clean)
                 return clean
         except Exception as e:
-            logger.error(f"Title translation error (attempt {attempt + 1}/3): {e}")
-        if attempt < 2:
+            logger.error(f"Title translation error ({model}, attempt {attempt + 1}/{len(models)}): {e}")
+        if attempt < len(models) - 1:
             import time as _time
             _time.sleep(2 * (attempt + 1))
     return None
@@ -128,11 +147,13 @@ def summarize_news_fa(title: str, content: str) -> dict:
     """
 
     # Retry transient OpenRouter failures / empty responses so a single hiccup
-    # doesn't drop the news from the channel.
-    for attempt in range(3):
+    # doesn't drop the news from the channel. Falls back to the spare model
+    # after the primary exhausts its retries.
+    models = _attempt_models(config.OPENROUTER_MODEL)
+    for attempt, model in enumerate(models):
         try:
             response = client.chat.completions.create(
-                model=config.OPENROUTER_MODEL,
+                model=model,
                 messages=[
                     {"role": "system", "content": "شما یک تحلیلگر حرفه‌ای اخبار مالی هستید."},
                     {"role": "user", "content": prompt}
@@ -143,15 +164,15 @@ def summarize_news_fa(title: str, content: str) -> dict:
 
             text = response.choices[0].message.content
             if not text or not text.strip():
-                logger.error(f"OpenAI returned empty response (attempt {attempt + 1}/3)")
+                logger.error(f"OpenAI returned empty response ({model}, attempt {attempt + 1}/{len(models)})")
             elif "عنوان فارسی:" not in text or "خلاصه فارسی:" not in text:
-                logger.error(f"OpenAI returned invalid format (attempt {attempt + 1}/3)")
+                logger.error(f"OpenAI returned invalid format ({model}, attempt {attempt + 1}/{len(models)})")
             else:
                 title_fa = text.split("عنوان فارسی:")[1].split("خلاصه فارسی:")[0].strip()
                 summary_fa = text.split("خلاصه فارسی:")[1].strip()
 
                 if not title_fa or not summary_fa:
-                    logger.error(f"OpenAI returned empty title or summary (attempt {attempt + 1}/3)")
+                    logger.error(f"OpenAI returned empty title or summary ({model}, attempt {attempt + 1}/{len(models)})")
                 else:
                     # Defensive: never let a truncated Persian word reach the channel
                     summary_fa = _safe_truncate(summary_fa, 950)
@@ -160,8 +181,8 @@ def summarize_news_fa(title: str, content: str) -> dict:
                         "summary_fa": summary_fa
                     }
         except Exception as e:
-            logger.error(f"OpenRouter summarization error (attempt {attempt + 1}/3): {e}")
-        if attempt < 2:
+            logger.error(f"OpenRouter summarization error ({model}, attempt {attempt + 1}/{len(models)}): {e}")
+        if attempt < len(models) - 1:
             import time as _time
             _time.sleep(2 * (attempt + 1))
     return None
@@ -193,11 +214,13 @@ def summarize_forex_event_fa(event: dict) -> str:
     """
 
     # Retry transient failures so we get a real Persian analysis instead of
-    # falling back to the plain English template.
-    for attempt in range(3):
+    # falling back to the plain English template. Spare model kicks in after
+    # the primary exhausts its retries.
+    models = _attempt_models(config.OPENROUTER_MODEL)
+    for attempt, model in enumerate(models):
         try:
             response = client.chat.completions.create(
-                model=config.OPENROUTER_MODEL,
+                model=model,
                 messages=[
                     {"role": "system", "content": "شما یک تحلیلگر حرفه‌ای بازارهای مالی هستید."},
                     {"role": "user", "content": prompt}
@@ -210,8 +233,8 @@ def summarize_forex_event_fa(event: dict) -> str:
                 raise ValueError("Empty response")
             return _safe_truncate(content.strip(), 400)
         except Exception as e:
-            logger.error(f"Forex event analysis error (attempt {attempt + 1}/3): {e}")
-            if attempt < 2:
+            logger.error(f"Forex event analysis error ({model}, attempt {attempt + 1}/{len(models)}): {e}")
+            if attempt < len(models) - 1:
                 import time as _time
                 _time.sleep(2 * (attempt + 1))
     impact_map = {"High": "پرنفوذ", "Medium": "متوسط", "Low": "کم"}
@@ -239,6 +262,40 @@ COUNTRY_FA = {
 IMPACT_EMOJI = {"High": "🔴", "Medium": "🟡", "Low": "🟢"}
 
 _caption_cache: dict[str, str] = {}
+
+
+def _norm_persian(s: str) -> str:
+    """Normalize Persian text for loose title matching: drop zero-width
+    characters (zwnj/zwj/rtl), NFKC-fold, strip punctuation, collapse spaces."""
+    if not s:
+        return ""
+    s = s.replace("\u200c", "").replace("\u200f", "").replace("\ufeff", "").replace("\u200d", "")
+    s = unicodedata.normalize("NFKC", s)
+    s = re.sub(r"[،.;:!؟?()\[\]\"'\-_|/]", "", s)
+    return re.sub(r"\s+", " ", s).strip().lower()
+
+
+def _caption_covers_title(result: str, title: str) -> bool:
+    """True when the model's caption already covers this event's title.
+
+    Exact match wins; otherwise one-directional substring containment on the
+    normalized text (min length 8 chars) — so a model that paraphrased
+    ('بیانیه سیاست پولی' vs DB 'بیانیه سیاست پولی بانک مرکزی استرالیا') is
+    treated as covered. Appending it anyway would duplicate the block, which is
+    exactly the 'repeated event' trash seen on the channel."""
+    t_norm = _norm_persian(title)
+    if not t_norm:
+        return False
+    if t_norm in _norm_persian(result):
+        return True
+    for line in result.split("\n"):
+        l_norm = _norm_persian(line)
+        # only compare real titles — strip the 📣/🚦 block header if present
+        if "|" in line:
+            l_norm = _norm_persian(line.split("|", 1)[1])
+        if len(l_norm) >= 8 and len(t_norm) >= 8 and (l_norm in t_norm or t_norm in l_norm):
+            return True
+    return False
 
 
 def generate_daily_calendar_caption(
@@ -328,70 +385,83 @@ def generate_daily_calendar_caption(
 [۱ خط]
 
 🚨 قوانین:
-- هر رویداد: فقط یک 🔹 و حداکثر ۲ خط تحلیل کوتاه و دقیق
+- ⚠️ مهم‌ترین قانون: کل متن نهایی حداکثر ۸۵۰ کاراکتر باشد — اگر بیشتر شد، کوتاه‌تر بنویس
+- هر خط تحلیل حداکثر ۵۵ کاراکتر (یک جمله کوتاه)
+- هر رویداد: فقط یک 🔹 و حداکثر ۲ خط تحلیل کوتاه و دقیق — بیش از ۲ خط ممنوع
+- هر رویداد را دقیقاً یک بار ذکر کن — هیچ رویدادی تکراری نباشد
 - 🔴: ۲ خط کوتاه. 🟡: ۱-۲ خط کوتاه
 - همه {len(important_events)} رویداد — یکی کم نشود
+- تمرکز بازار: حداکثر ۲ خط کوتاه. هشدار: فقط ۱ خط کوتاه
 - بدون توضیح اضافی. فقط متن ساده فارسی"""
 
     calendar_model = getattr(config, "OPENROUTER_CALENDAR_MODEL", None) or "deepseek/deepseek-chat"
-    try:
-        response = client.chat.completions.create(
-            model=calendar_model,
-            messages=[
-                {"role": "system", "content": "شما یک تحلیلگر حرفه‌ای بازارهای مالی هستید. خروجی فقط متن ساده فارسی."},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.3,
-            max_tokens=max(2000, len(important_events) * 280 + 1000),
-        )
-        text = response.choices[0].message.content
-        if not text or not text.strip():
-            logger.error("OpenRouter returned empty calendar caption")
-            return None
-
-        result = text.strip()
-        if len(result) < 50:
-            logger.warning(f"Calendar caption too short ({len(result)} chars), discarding: {result[:80]}...")
-            return None
-
-        # Guarantee EVERY important event appears in the caption. The model can
-        # stop early or omit a title, so deterministically append anything the
-        # model skipped — built from the real DB fields we already have.
-        covered = set()
-        for ev in important_events:
-            t = (ev.get("title_fa") or ev.get("title", "")).strip()
-            if t and t in result:
-                covered.add(ev.get("id"))
-
-        missing_blocks = []
-        for ev in important_events:
-            if ev.get("id") in covered:
-                continue
-            flag = COUNTRY_FLAG.get(ev.get("country", ""), "")
-            country_fa = COUNTRY_FA.get(ev.get("country", ""), ev.get("country", ""))
-            impact_emoji = IMPACT_EMOJI.get(ev.get("impact", ""), "")
-            title = (ev.get("title_fa") or ev.get("title", "") or "").strip()
-            block = (
-                f"📣 {country_fa} | {ev.get('country', '')} {flag}\n"
-                f"{impact_emoji} {ev.get('event_time', '')} | {title}"
+    # Try the primary calendar model, then fall back to OPENROUTER_SPARE_MODEL
+    # if it exhausts its attempts. Previously this was a single shot — one
+    # transient failure dropped the whole caption to the plain date line.
+    models = _attempt_models(calendar_model)
+    result = None
+    for attempt, model in enumerate(models):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": "شما یک تحلیلگر حرفه‌ای بازارهای مالی هستید. خروجی فقط متن ساده فارسی."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.3,
+                max_tokens=max(2000, len(important_events) * 280 + 1000),
             )
-            if ev.get("forecast"):
-                block += f"\n   پیش‌بینی: {ev['forecast']}"
-            if ev.get("previous"):
-                block += f"\n   مقدار قبلی: {ev['previous']}"
-            missing_blocks.append(block)
+            text = response.choices[0].message.content
+            if not text or not text.strip():
+                logger.error(f"OpenRouter returned empty calendar caption ({model}, attempt {attempt + 1}/{len(models)})")
+            elif len(text.strip()) < 50:
+                logger.warning(f"Calendar caption too short ({len(text.strip())} chars) from {model}, discarding: {text.strip()[:80]}...")
+            else:
+                result = text.strip()
+                break
+        except Exception as e:
+            logger.error(f"Calendar caption generation error ({model}, attempt {attempt + 1}/{len(models)}): {e}")
+        if attempt < len(models) - 1:
+            import time as _time
+            _time.sleep(2 * (attempt + 1))
 
-        if missing_blocks:
-            result += "\n\n" + "\n\n".join(missing_blocks)
-            logger.warning(
-                f"Appended {len(missing_blocks)} event(s) the model omitted "
-                f"({len(covered)}/{len(important_events)} covered)"
-            )
-
-        _caption_cache[cache_key] = result
-        logger.info(f"Calendar caption generated ({len(result)} chars, {len(covered) + len(missing_blocks)}/{len(important_events)} events)")
-        return result
-
-    except Exception as e:
-        logger.error(f"Calendar caption generation error: {e}")
+    if result is None:
         return None
+
+    # Guarantee EVERY important event appears in the caption. The model can
+    # stop early or omit a title, so deterministically append anything the
+    # model skipped — built from the real DB fields we already have.
+    covered = set()
+    for ev in important_events:
+        t = (ev.get("title_fa") or ev.get("title", "")).strip()
+        if t and _caption_covers_title(result, t):
+            covered.add(ev.get("id"))
+
+    missing_blocks = []
+    for ev in important_events:
+        if ev.get("id") in covered:
+            continue
+        flag = COUNTRY_FLAG.get(ev.get("country", ""), "")
+        country_fa = COUNTRY_FA.get(ev.get("country", ""), ev.get("country", ""))
+        impact_emoji = IMPACT_EMOJI.get(ev.get("impact", ""), "")
+        title = (ev.get("title_fa") or ev.get("title", "") or "").strip()
+        block = (
+            f"📣 {country_fa} | {ev.get('country', '')} {flag}\n"
+            f"{impact_emoji} {ev.get('event_time', '')} | {title}"
+        )
+        if ev.get("forecast"):
+            block += f"\n   پیش‌بینی: {ev['forecast']}"
+        if ev.get("previous"):
+            block += f"\n   مقدار قبلی: {ev['previous']}"
+        missing_blocks.append(block)
+
+    if missing_blocks:
+        result += "\n\n" + "\n\n".join(missing_blocks)
+        logger.warning(
+            f"Appended {len(missing_blocks)} event(s) the model omitted "
+            f"({len(covered)}/{len(important_events)} covered)"
+        )
+
+    _caption_cache[cache_key] = result
+    logger.info(f"Calendar caption generated ({len(result)} chars, {len(covered) + len(missing_blocks)}/{len(important_events)} events)")
+    return result

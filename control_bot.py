@@ -234,16 +234,19 @@ def register_handlers(bot):
         api_key = _read_env_value("OPENROUTER_API_KEY")
         masked = api_key[:8] + "..." + api_key[-4:] if len(api_key) > 12 else "not set"
         model = _get_env_raw("OPENROUTER_MODEL")
+        spare = _get_env_raw("OPENROUTER_SPARE_MODEL")
         base = _get_env_raw("OPENROUTER_BASE_URL")
         text = (
             f"<b>🤖 OpenRouter</b>\n\n"
             f"<b>Model:</b> <code>{model}</code>\n"
+            f"<b>Spare:</b> <code>{spare or '— none —'}</code>\n"
             f"<b>API Key:</b> <code>{masked}</code>\n"
             f"<b>Base URL:</b> <code>{base}</code>"
         )
         kbd = InlineKeyboardMarkup(row_width=1)
         kbd.add(
             _btn("✏️ Model", "model_edit"),
+            _btn("✏️ Spare Model", "spare_edit"),
             _btn("✏️ API Key", "apikey_edit"),
             _btn("◀️ Back", "menu"),
         )
@@ -269,6 +272,18 @@ def register_handlers(bot):
             return
         user_state[call.from_user.id] = {"mode": "model_edit"}
         bot.send_message(call.message.chat.id, "Send the new model name:")
+        bot.answer_callback_query(call.id)
+
+    @bot.callback_query_handler(func=lambda c: c.data == "spare_edit")
+    def cb_spare_edit(call):
+        if not _is_admin(call.from_user.id):
+            bot.answer_callback_query(call.id, "⛔ Unauthorized")
+            return
+        user_state[call.from_user.id] = {"mode": "spare_edit"}
+        bot.send_message(
+            call.message.chat.id,
+            "Send the new spare model name (or `-` to disable):",
+        )
         bot.answer_callback_query(call.id)
 
     @bot.callback_query_handler(func=lambda c: c.data == "apikey_edit")
@@ -651,6 +666,18 @@ def register_handlers(bot):
             bot.reply_to(
                 message, f"✅ Model set to: <code>{text}</code>", parse_mode="HTML"
             )
+            user_state.pop(uid, None)
+            _show_model(message.chat.id)
+
+        elif mode == "spare_edit":
+            if text.strip() == "-":
+                _set_env_line("OPENROUTER_SPARE_MODEL", "")
+                reply = "✅ Spare model disabled."
+            else:
+                _set_env_line("OPENROUTER_SPARE_MODEL", text)
+                reply = f"✅ Spare model set to: <code>{text}</code>"
+            _sync_runtime()
+            bot.reply_to(message, reply, parse_mode="HTML")
             user_state.pop(uid, None)
             _show_model(message.chat.id)
 

@@ -900,7 +900,15 @@ def _build_snapshot_caption(now_utc: datetime) -> str | None:
                         first_ev = event_idx[0]
                         prefix = lines[:first_ev]
                         body = lines[first_ev:]
-                        budget = 985  # footer ~62 + escaping keep total < 1024, with slack
+                        # ⚠️ Telegram measures the ESCAPED payload (MarkdownV2
+                        # backslash expansion + footer), not raw text — the
+                        # raw-only budget above silently overflowed and
+                        # Telegram returned 400 'caption is too long'.
+                        footer_escaped = (
+                            f"\n\n{escape_markdown_v2(_build_date_caption(now_utc))}\n"
+                            "💎💎 ||@ForexEyvazi|| 💎💎"
+                        )
+                        payload_budget = 1024 - len(footer_escaped) - 8  # 8-char slack
 
                         # Split body into per-event chunks (each starts with 📣)
                         chunks, cur = [], []
@@ -913,6 +921,21 @@ def _build_snapshot_caption(now_utc: datetime) -> str | None:
                                 cur.append(l)
                         if cur:
                             chunks.append(cur)
+
+                        # Defensive: drop byte-identical duplicate blocks
+                        # (model self-repeat). Key = 📣 header + first title line.
+                        seen_chunks: set[tuple[str, str]] = set()
+                        dedup_chunks = []
+                        for _ch in chunks:
+                            _key = (
+                                _ch[0].strip(),
+                                next((l.strip() for l in _ch[1:] if l.strip()), ""),
+                            )
+                            if _key in seen_chunks:
+                                continue
+                            seen_chunks.add(_key)
+                            dedup_chunks.append(_ch)
+                        chunks = dedup_chunks
 
                         # Header lines = non-analysis (before first 🔹); analysis after
                         def split_chunk(ch):
@@ -932,26 +955,30 @@ def _build_snapshot_caption(now_utc: datetime) -> str | None:
                         # 2) budget-aware: shorten analysis lines, then drop analysis
                         #    lines event by event (keep headers)
                         def total_len():
-                            return len("\n".join(prefix)) + sum(
-                                1 + len("\n".join(headers[i])) + (1 + len("\n".join(a)) if a else 0)
-                                for i, a in enumerate(analyses)
-                            )
+                            raw = "\n".join(prefix)
+                            for i in range(len(chunks)):
+                                raw += "\n" + "\n".join(headers[i])
+                                if analyses[i]:
+                                    raw += "\n" + "\n".join(analyses[i])
+                            return len(escape_markdown_v2(raw)) + len(footer_escaped)
 
-                        # shorten longest analysis line repeatedly
-                        while total_len() > budget:
-                            best = None  # (event_idx, line_idx, line)
+                        # drop the longest analysis line ENTIRELY (never mid-word
+                        # "…" cuts — broken-looking text is worse than one less
+                        # line) until the payload fits
+                        while total_len() > payload_budget:
+                            best = None  # (event_idx, line_idx, line_len)
                             for i, a in enumerate(analyses):
                                 for j, l in enumerate(a):
-                                    if len(l) > 40 and (best is None or len(l) > best[2]):
+                                    if best is None or len(l) > best[2]:
                                         best = (i, j, len(l))
                             if best is None:
                                 break
-                            ei_, ji, ln = best
-                            analyses[ei_][ji] = analyses[ei_][ji][:39].rstrip() + "…"
+                            ei_, ji, _ln = best
+                            del analyses[ei_][ji]
 
-                        # drop analysis lines (or whole analysis) if still over
+                        # drop remaining analysis lines (whole lines) if still over
                         guard = 0
-                        while total_len() > budget and guard < 500:
+                        while total_len() > payload_budget and guard < 500:
                             guard += 1
                             # remove the LAST analysis line over all events
                             nonempty = [i for i, a in enumerate(analyses) if a]
@@ -961,6 +988,27 @@ def _build_snapshot_caption(now_utc: datetime) -> str | None:
                             target = max(nonempty, key=lambda i: len(analyses[i]))
                             analyses[target].pop(-1)
 
+                        # last resort: drop whole event blocks (header + analysis),
+                        # least important first (🟢 then 🟡 then 🔴), keep >= 1 block
+                        guard = 0
+                        while total_len() > payload_budget and len(headers) > 1 and guard < 500:
+                            guard += 1
+
+                            def _impact_rank(h):
+                                if any("🟢" in x for x in h):
+                                    return 0
+                                if any("🟡" in x for x in h):
+                                    return 1
+                                return 2
+
+                            drop_i = min(
+                                range(len(headers)),
+                                key=lambda i: (_impact_rank(headers[i]), i),
+                            )
+                            del chunks[drop_i]
+                            del headers[drop_i]
+                            del analyses[drop_i]
+
                         # rebuild
                         rebuilt = "\n".join(prefix)
                         for i, ch in enumerate(chunks):
@@ -969,7 +1017,8 @@ def _build_snapshot_caption(now_utc: datetime) -> str | None:
                                 rebuilt += "\n" + "\n".join(analyses[i])
                         ai_caption = rebuilt
                         logger.warning(
-                            f"Caption fit-to-budget: {len(ai_caption)} chars, "
+                            f"Caption fit-to-budget: {len(ai_caption)} raw / "
+                            f"{total_len()} payload (limit 1024), "
                             f"{len(headers)} event blocks kept, "
                             f"analyses: {[len(a) for a in analyses]}"
                         )
